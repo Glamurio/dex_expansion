@@ -65,6 +65,7 @@ local GrowthRates = loadModule("src/growth_rates.lua")
 local Moves = loadModule("src/moves.lua", NewMoves, Retro)
 local Encounters = loadModule("src/encounters.lua")
 local Starters = loadModule("src/starters.lua")
+local Icons = loadModule("src/icons.lua")
 
 -- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
 -- locally rather than committed (tools/build_dex_entries.py).  Without it the
@@ -307,6 +308,13 @@ end
 
 mod.log:info("registered %d species (%d skipped)", registered, skipped)
 
+-- ------------------------------------------------------------ party icons
+-- Assigned AFTER species registration so every id exists in the registry.
+-- icons.byDex only covers dex 1..151, so without this every new species drew
+-- no figure at all in the party menu.
+
+Icons.apply(mod, Data.SPECIES)
+
 -- --------------------------------------------------------------- starters
 -- After species registration on purpose: a non-Kanto trio names species this
 -- mod itself registers, so they have to be in the registry first.
@@ -361,22 +369,14 @@ else
   })
 end
 
--- ------------------------------------- runtime bucket reconciliation
+-- ------------------------------------- live encounter reconciliation
 -- src/world/Encounter.lua rolls a slot as:
 --     for i, threshold in ipairs(grass.buckets or buckets) do
 --       if pick < threshold then local slot = grass.slots[i] ...
 --
--- so bucket count and slot count MUST agree.  Registries are not readable
--- during the entry chunk (merge has not happened yet), and `buckets` cannot
--- be declared in the patch at all -- it is not a field of the encounters
--- schema, and including it makes validation reject the whole patch.  So the
--- thresholds are written here, straight to live Data, where no schema
--- applies and the surviving slot count is finally knowable.
---
--- Two failure modes if the counts disagree:
---   more slots than buckets -> the tail slots are unreachable
---   more buckets than slots -> `slot` is nil and the roll yields NO
---                              encounter, silently cutting the rate
+-- so bucket count and slot count MUST agree, and `buckets` cannot be declared
+-- in the registry patch at all -- it is not a field of the encounters schema,
+-- and including it makes validation reject the whole patch.
 
 -- Vanilla Gen 1 slot weights (src/world/FieldDefaults.lua encounterBuckets).
 -- Cumulative thresholds out of 256, so slot 1 is ~20% and slot 10 is ~1%.
@@ -414,6 +414,47 @@ local function widenBuckets(slots)
   return out
 end
 
+-- Apply placement rows straight to live Data.
+--
+-- The registry patch in src/encounters.lua is kept, but it is NOT trusted to
+-- have landed: routes stayed vanilla through several rounds of fixes even
+-- though the merge, the schema and the payload each check out in isolation.
+-- Rather than keep guessing which layer eats the write, this reconciles
+-- against the table the game actually rolls on -- the same live-Data approach
+-- Kanto-Reforged falls back to, and the same game.ready pass that provably
+-- works (it is what retargets the rival).
+--
+-- Idempotent by species membership, so it is a no-op for any row the registry
+-- patch already delivered and cannot double-add on a hot reload.
+local function applyPlacement(encounters, placement, contested)
+  local added, maps = 0, 0
+  for mapId, kinds in pairs(placement or {}) do
+    local def = encounters[mapId]
+    if def and not contested[mapId] then
+      for kind, rows in pairs(kinds) do
+        local table_ = def[kind]
+        if type(table_) == "table" and type(table_.slots) == "table" then
+          local present = {}
+          for _, slot in ipairs(table_.slots) do
+            if slot.species then present[slot.species] = true end
+          end
+          local before = #table_.slots
+          for _, row in ipairs(rows) do
+            if not present[row.species] then
+              table_.slots[#table_.slots + 1] =
+                { level = row.level, species = row.species }
+              present[row.species] = true
+              added = added + 1
+            end
+          end
+          if #table_.slots > before then maps = maps + 1 end
+        end
+      end
+    end
+  end
+  return added, maps
+end
+
 mod.events:on("game.ready", function(payload)
   -- The game.ready payload is a WRAPPER: ModRuntime.emit("game.ready",
   -- { game = self }) in src/core/Game.lua.  Taking the argument as the Game
@@ -423,6 +464,18 @@ mod.events:on("game.ready", function(payload)
   local game = payload and (payload.game or payload)
   local encounters = game and game.data and game.data.encounters
   if type(encounters) ~= "table" then return end
+
+  if encounterMode ~= "dataonly" then
+    local contested = {}
+    if respect then
+      for _, id in ipairs(Data.CONTESTED_MAPS or {}) do contested[id] = true end
+    end
+    local added, maps = applyPlacement(encounters, Data.PLACEMENT, contested)
+    if added > 0 then
+      mod.log:info("added %d wild slots across %d tables (live)", added, maps)
+    end
+  end
+
   local fixed = 0
   for mapId, def in pairs(encounters) do
     if type(def) == "table" then
