@@ -116,12 +116,15 @@ end
 
 -- The vanilla ask lines name a specific species, so they can only be reused
 -- when the species behind that ball is unchanged.  Otherwise fall back to a
--- generic line with the name substituted, which is what the randomizer does.
+-- generic line with the name substituted.
 local function askFor(slotDef, species)
   if species == Starters.TRIOS.kanto[slotDef.slot] then
     return slotDef.askText, nil
   end
-  return "So! You want\\n{RAM}?", true
+  -- A REAL newline.  Written as "\\n" in Lua source this is a backslash and
+  -- an "n", not a line break, and the renderer dropped the backslash and drew
+  -- the n -- "You want nTORCHIC?".
+  return "So! You want\n{RAM}?", true
 end
 
 function Starters.rows(slotDef, chosen)
@@ -139,6 +142,7 @@ function Starters.rows(slotDef, chosen)
     { "push_screen", "DexEntryMenu", { species = species, forceOwned = true } },
     ask,
     { "jump_if_false", "done" },
+    { "play_sound", "Get_Key_Item" },
     { "show_text", "_OaksLabReceivedMonText", { RAM = species } },
     { "give_pokemon", species, LEVEL },
     { "set_flag", "EVENT_GOT_STARTER" },
@@ -148,6 +152,7 @@ function Starters.rows(slotDef, chosen)
     { "face_object", 1, "up" },
     { "show_text", "_OaksLabRivalIllTakeThisOneText" },
     { "hide_object", "OAKS_LAB", slotDef.rivalBall },
+    { "play_sound", "Get_Key_Item" },
     { "show_text", "_OaksLabRivalReceivedMonText", { RAM = rivalSpecies } },
     { "jump", "done" },
     { "label", "blocked" },
@@ -169,6 +174,98 @@ local function handler(slotDef, resolveChosen)
       onDone = onDone,
     })
   end
+end
+
+-- ------------------------------------------------------- rival retargeting
+-- Setting the chose flag is not enough.  data/scripts/oaks_lab.lua picks the
+-- rival's roster with
+--     local party = flags.EVENT_CHOSE_BULBASAUR and 3
+--                   or flags.EVENT_CHOSE_SQUIRTLE and 2 or 1
+--     { "start_battle", "trainer", "OPP_RIVAL1", party }
+-- and those parties are VANILLA trainer data, so the rival still opened with
+-- Squirtle against a Torchic.  The party index is already right; only the
+-- species in it are wrong.
+--
+-- Substitution is done stage-for-stage along the evolution line, so the later
+-- rival battles and the Champion fight stay consistent: Charmander/Charmeleon/
+-- Charizard become the fire trio's three stages, and so on.
+--
+-- This runs at game.ready against live Data rather than through the trainers
+-- registry, because `parties` is f.list(f.list(...)) and arrays REPLACE
+-- wholesale on a record patch -- rewriting one species would mean restating
+-- every rival roster, levels included.
+
+local VANILLA_LINES = {
+  LEFT = { "CHARMANDER", "CHARMELEON", "CHARIZARD" },
+  MIDDLE = { "SQUIRTLE", "WARTORTLE", "BLASTOISE" },
+  RIGHT = { "BULBASAUR", "IVYSAUR", "VENUSAUR" },
+}
+
+-- Walk `evolutions` to get a species' own line, so a trio member with only
+-- two stages (or an odd chain) maps onto whatever it actually has.
+function Starters.lineOf(pokemon, id)
+  local line, seen = { id }, { [id] = true }
+  for _ = 1, 4 do
+    local def = pokemon and pokemon[line[#line]]
+    local nextId = nil
+    for _, evo in ipairs((def and def.evolutions) or {}) do
+      if evo.species and not seen[evo.species] then
+        nextId = evo.species
+        break
+      end
+    end
+    if not nextId then break end
+    seen[nextId] = true
+    line[#line + 1] = nextId
+  end
+  return line
+end
+
+-- Returns a map of vanilla species id -> replacement id.
+function Starters.substitutions(pokemon, chosen)
+  local map = {}
+  for slot, vanilla in pairs(VANILLA_LINES) do
+    local ours = Starters.lineOf(pokemon, chosen[slot])
+    for i, vanillaId in ipairs(vanilla) do
+      -- clamp to the last stage we have, so a two-stage line still fills the
+      -- third slot rather than leaving a vanilla starter behind
+      local replacement = ours[math.min(i, #ours)]
+      if replacement and replacement ~= vanillaId then
+        map[vanillaId] = replacement
+      end
+    end
+  end
+  return map
+end
+
+-- Rewrite rival rosters in place.  Restricted to classes whose id names the
+-- rival: other trainers may legitimately carry a starter line, and silently
+-- rewriting those would be a different bug.
+function Starters.retargetRivals(mod, chosen)
+  mod.events:on("game.ready", function(game)
+    local data = game and game.data
+    local trainers = data and data.trainers
+    if type(trainers) ~= "table" then return end
+    local map = Starters.substitutions(data.pokemon, chosen)
+    if not next(map) then return end
+    local swapped = 0
+    for id, def in pairs(trainers) do
+      if type(id) == "string" and id:find("RIVAL")
+          and type(def) == "table" and type(def.parties) == "table" then
+        for _, party in ipairs(def.parties) do
+          for _, mon in ipairs(party) do
+            local to = mon.species and map[mon.species]
+            if to then
+              mon.species = to
+              swapped = swapped + 1
+            end
+          end
+        end
+      end
+    end
+    mod.log:info("retargeted %d rival party slots onto the chosen trio",
+      swapped)
+  end)
 end
 
 -- Install the contribution.  Returns the resolved trio for logging, or nil
@@ -214,6 +311,8 @@ function Starters.apply(mod, mode, seed)
   end
 
   local preview = Starters.resolve(mode, seed, nil)
+  -- the rival's roster has to follow the trio, not just the ball he walks to
+  Starters.retargetRivals(mod, preview)
   mod.log:info("starters: %s / %s / %s",
     preview.LEFT, preview.MIDDLE, preview.RIGHT)
   return preview
