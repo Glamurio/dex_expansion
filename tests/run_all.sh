@@ -12,3 +12,6 @@ luajit tests/manifest_check.lua "$1"
 echo
 echo "--- 3. load, both modes, mod-relative require forbidden"
 luajit tests/load_test.lua
+echo
+echo "--- 4. starter trios: species exist, no soft-lock, rival chain intact"
+luajit tests/starter_test.lua
