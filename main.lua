@@ -362,36 +362,65 @@ else
 end
 
 -- ------------------------------------- runtime bucket reconciliation
--- The safety net, and the reason this mod does not simply trust its own
--- arithmetic.
---
 -- src/world/Encounter.lua rolls a slot as:
 --     for i, threshold in ipairs(grass.buckets or buckets) do
 --       if pick < threshold then local slot = grass.slots[i] ...
 --
 -- so bucket count and slot count MUST agree.  Registries are not readable
--- during the entry chunk (merge has not happened yet), and other mods
--- append or replace slots on the same maps, so the final count is not
--- knowable at registration time.  Two failure modes follow:
+-- during the entry chunk (merge has not happened yet), and `buckets` cannot
+-- be declared in the patch at all -- it is not a field of the encounters
+-- schema, and including it makes validation reject the whole patch.  So the
+-- thresholds are written here, straight to live Data, where no schema
+-- applies and the surviving slot count is finally knowable.
 --
---   more slots than buckets -> the tail slots are unreachable (harmless)
+-- Two failure modes if the counts disagree:
+--   more slots than buckets -> the tail slots are unreachable
 --   more buckets than slots -> `slot` is nil and the roll yields NO
---                              encounter, silently cutting the encounter
---                              rate
---
--- The second one is a real bug, and it happens whenever a mod that loads
--- after this one replaces a slot list wholesale.  So rather than trusting
--- the merge, rebuild the thresholds from the slot count that actually
--- survived, evenly spaced to 256.
+--                              encounter, silently cutting the rate
 
-local function evenBuckets(n)
+-- Vanilla Gen 1 slot weights (src/world/FieldDefaults.lua encounterBuckets).
+-- Cumulative thresholds out of 256, so slot 1 is ~20% and slot 10 is ~1%.
+local VANILLA_BUCKETS = { 51, 102, 141, 166, 191, 216, 229, 242, 253, 256 }
+local VANILLA_SLOTS = #VANILLA_BUCKETS
+
+-- Thresholds for a widened table.
+--
+-- An EVEN spread here would be wrong, and was: it flattens Gen 1's rarity
+-- curve, making the 1%-tail slot as common as the 20% lead slot.  Worse, the
+-- pass below used to run on every map, so untouched vanilla routes got
+-- reweighted too.
+--
+-- Instead the original ten keep their vanilla PROPORTIONS, compressed into
+-- the share of the table they still occupy, and the appended rows split the
+-- remainder evenly.  With 10 vanilla + 10 added, the vanilla roster keeps
+-- half the encounters and its internal rarity ordering intact.
+local function widenBuckets(slots)
   local out = {}
-  for i = 1, n do out[i] = math.floor(i * 256 / n + 0.5) end
-  out[n] = 256 -- Encounter.lua requires the last entry to be exactly 256
+  local base = math.min(VANILLA_SLOTS, slots)
+  local extra = slots - base
+  if extra <= 0 then return nil end -- nothing added: leave the table alone
+  local split = math.floor(256 * base / slots + 0.5)
+  for i = 1, base do
+    out[i] = math.floor(VANILLA_BUCKETS[i] * split / 256 + 0.5)
+    if i > 1 and out[i] <= out[i - 1] then out[i] = out[i - 1] + 1 end
+  end
+  for j = 1, extra do
+    out[base + j] = math.floor(split + (256 - split) * j / extra + 0.5)
+    if out[base + j] <= out[base + j - 1] then
+      out[base + j] = out[base + j - 1] + 1
+    end
+  end
+  out[slots] = 256 -- Encounter.lua requires the last entry to be exactly 256
   return out
 end
 
-mod.events:on("game.ready", function(game)
+mod.events:on("game.ready", function(payload)
+  -- The game.ready payload is a WRAPPER: ModRuntime.emit("game.ready",
+  -- { game = self }) in src/core/Game.lua.  Taking the argument as the Game
+  -- itself makes payload.data nil, so the whole pass returned immediately and
+  -- did nothing -- silently.  That single mistake broke BOTH the rival
+  -- retarget and the encounter widening.
+  local game = payload and (payload.game or payload)
   local encounters = game and game.data and game.data.encounters
   if type(encounters) ~= "table" then return end
   local fixed = 0
@@ -402,17 +431,23 @@ mod.events:on("game.ready", function(game)
         if type(table_) == "table" and type(table_.slots) == "table" then
           local slots = #table_.slots
           local current = table_.buckets and #table_.buckets or nil
-          if slots > 0 and current ~= slots then
-            table_.buckets = evenBuckets(slots)
-            fixed = fixed + 1
-            mod.log:debug("%s.%s: rebuilt %d buckets for %d slots",
-              tostring(mapId), kind, current or 0, slots)
+          -- Only a table that grew past the vanilla ten needs thresholds of
+          -- its own.  A 10-slot table is left completely alone so it keeps
+          -- using constants.encounterBuckets, exactly as vanilla does.
+          if slots > VANILLA_SLOTS and current ~= slots then
+            local rebuilt = widenBuckets(slots)
+            if rebuilt then
+              table_.buckets = rebuilt
+              fixed = fixed + 1
+              mod.log:debug("%s.%s: %d buckets for %d slots",
+                tostring(mapId), kind, #rebuilt, slots)
+            end
           end
         end
       end
     end
   end
   if fixed > 0 then
-    mod.log:info("reconciled encounter buckets on %d tables", fixed)
+    mod.log:info("widened encounter buckets on %d tables", fixed)
   end
 end)
