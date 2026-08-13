@@ -183,8 +183,8 @@ end
 --                   or flags.EVENT_CHOSE_SQUIRTLE and 2 or 1
 --     { "start_battle", "trainer", "OPP_RIVAL1", party }
 -- and those parties are VANILLA trainer data, so the rival still opened with
--- Squirtle against a Torchic.  The party index is already right; only the
--- species in it are wrong.
+-- a Kanto starter.  The party index is already right; only the species in it
+-- are wrong.
 --
 -- Substitution is done stage-for-stage along the evolution line, so the later
 -- rival battles and the Champion fight stay consistent: Charmander/Charmeleon/
@@ -242,7 +242,12 @@ end
 -- rival: other trainers may legitimately carry a starter line, and silently
 -- rewriting those would be a different bug.
 function Starters.retargetRivals(mod, chosen)
-  mod.events:on("game.ready", function(game)
+  mod.events:on("game.ready", function(payload)
+    -- The payload is { game = <Game> } (ModRuntime.emit("game.ready",
+    -- { game = self }) in src/core/Game.lua), NOT the Game itself.  Reading
+    -- payload.data instead of payload.game.data is why the rival kept his
+    -- vanilla starter: this handler ran and returned immediately, silently.
+    local game = payload and (payload.game or payload)
     local data = game and game.data
     local trainers = data and data.trainers
     if type(trainers) ~= "table" then return end
