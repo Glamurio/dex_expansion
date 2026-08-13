@@ -72,36 +72,32 @@ function Encounters.subset(species, seed, size)
   return chosen
 end
 
--- Even thresholds out of 256.  Encounter.lua accepts "its own `buckets` of
--- any length, as long as the last entry is 256 and there are as many slots
--- as buckets" -- which is what makes per-map slot expansion possible without
--- touching constants.encounterBuckets at all.
---
--- That matters for compatibility: the global constant is a `deep` registry
--- key, where a bare list CONCATENATES rather than replaces (patching a
--- 20-entry list onto vanilla's 10 yields 30 and a broken rate table). The
--- per-map field sidesteps that entirely and cannot collide with any mod that
--- is not already editing the same map.
-local function evenBuckets(n)
-  local out = {}
-  for i = 1, n do out[i] = math.floor(i * 256 / n + 0.5) end
-  out[n] = 256
-  return out
-end
-
 -- Place `rows` onto a map, additively.
 --
 -- `extended` widens the slot table so added species have somewhere to go
--- instead of evicting vanilla ones; without it we append nothing, because
--- appending past the bucket count would create unreachable slots.
+-- instead of evicting vanilla ones; the widening itself happens at
+-- game.ready, see below.
 function Encounters.place(mod, mapId, kind, rows, opts)
   if #rows == 0 then return 0 end
   local payload = { slots = { __append = rows } }
-  if opts.extended then
-    -- vanilla base (10) plus what we add; the runtime reconciliation in
-    -- main.lua corrects this if another mod changes the count later.
-    payload.buckets = evenBuckets(opts.baseSlots + #rows)
-  end
+  -- DO NOT put `buckets` in this payload.
+  --
+  -- THIS WAS A REAL BUG, and a silent one: every route kept showing only its
+  -- vanilla encounters, with no error anywhere.  R.encounters types
+  -- grass/water as a NESTED f.rec{ rate, slots }, and nested records are
+  -- STRICT -- Schemas.lua: "Nested recs stay strict, that is where typos
+  -- hide".  So `buckets` is an unknown field at register time and the WHOLE
+  -- patch is rejected, even though Encounter.roll honours `buckets` happily
+  -- at runtime.  Verified against the engine's own validator:
+  --
+  --   encounters.ROUTE_1.grass.buckets: unknown field
+  --
+  -- tests/encounter_schema_test.lua pins both directions of this.
+  --
+  -- Widening is done instead by the game.ready reconciliation in main.lua,
+  -- which writes straight to live Data.encounters and so is not schema-bound.
+  -- It rebuilds thresholds from the slot count that actually survived the
+  -- merge, which is more correct than guessing the count here anyway.
   local ok, err = pcall(function()
     mod.content.encounters:patch(mapId, { [kind] = payload })
   end)
