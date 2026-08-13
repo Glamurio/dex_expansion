@@ -28,8 +28,13 @@
 --     duplicates it; where both write the same matchup row the intent is
 --     identical, so last-write-wins is harmless.
 
-local NewMoves = require("data.moves")
-local Retro = require("data.retro")
+-- Data tables arrive as chunk arguments rather than through `require`: a
+-- mod-relative require does not resolve at runtime (the loader runs with
+-- LOVE's package path pointing at the game).  main.lua reads and compiles
+-- these with mod:read + loadstring, the same seam quality_of_life uses.
+local NewMoves, Retro = ...
+assert(type(NewMoves) == "table", "src/moves.lua needs data/moves.lua")
+assert(type(Retro) == "table", "src/moves.lua needs data/retro.lua")
 
 local Moves = {}
 
