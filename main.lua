@@ -66,6 +66,10 @@ local Moves = loadModule("src/moves.lua", NewMoves, Retro)
 local Encounters = loadModule("src/encounters.lua")
 local Starters = loadModule("src/starters.lua")
 local Icons = loadModule("src/icons.lua")
+-- Evolutions Gen 1 cannot express natively (stone remaps, and friendship /
+-- held-item / time-of-day / known-move conditions turned into plain levels).
+-- Kept out of data/species.lua so the hand-checked rows stay reviewable.
+local EvolutionsExtra = loadModule("data/evolutions_extra.lua")
 
 -- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
 -- locally rather than committed (tools/build_dex_entries.py).  Without it the
@@ -285,6 +289,22 @@ end
 for _, record in ipairs(Data.SPECIES) do
   record = Moves.rewrite(record, resolveMove, resolveTypes)
   record = absolutise(record)
+  -- merge the mapped evolutions, skipping any target the record already
+  -- reaches so a rebuild of species.lua cannot produce duplicates
+  local extra = EvolutionsExtra[record.id]
+  if extra then
+    local have = {}
+    for _, evo in ipairs(record.evolutions) do have[evo.species] = true end
+    for _, evo in ipairs(extra) do
+      if not have[evo.species] then
+        record.evolutions[#record.evolutions + 1] = {
+          method = evo.method, level = evo.level,
+          item = evo.item, species = evo.species,
+        }
+        have[evo.species] = true
+      end
+    end
+  end
   record.dexEntry = record.dexEntry
     or (DexEntries.ENTRIES and DexEntries.ENTRIES[record.id])
   local bad = validate(record)
@@ -369,7 +389,7 @@ else
   })
 end
 
--- ------------------------------------- live encounter reconciliation
+-- ------------------------------------- runtime bucket reconciliation
 -- src/world/Encounter.lua rolls a slot as:
 --     for i, threshold in ipairs(grass.buckets or buckets) do
 --       if pick < threshold then local slot = grass.slots[i] ...
@@ -418,7 +438,7 @@ end
 --
 -- The registry patch in src/encounters.lua is kept, but it is NOT trusted to
 -- have landed: routes stayed vanilla through several rounds of fixes even
--- though the merge, the schema and the payload each check out in isolation.
+-- though the merge, the schema and the payload all check out in isolation.
 -- Rather than keep guessing which layer eats the write, this reconciles
 -- against the table the game actually rolls on -- the same live-Data approach
 -- Kanto-Reforged falls back to, and the same game.ready pass that provably
@@ -465,15 +485,13 @@ mod.events:on("game.ready", function(payload)
   local encounters = game and game.data and game.data.encounters
   if type(encounters) ~= "table" then return end
 
+  local addedSlots = 0
   if encounterMode ~= "dataonly" then
     local contested = {}
     if respect then
       for _, id in ipairs(Data.CONTESTED_MAPS or {}) do contested[id] = true end
     end
-    local added, maps = applyPlacement(encounters, Data.PLACEMENT, contested)
-    if added > 0 then
-      mod.log:info("added %d wild slots across %d tables (live)", added, maps)
-    end
+    addedSlots = applyPlacement(encounters, Data.PLACEMENT, contested)
   end
 
   local fixed = 0
@@ -500,7 +518,57 @@ mod.events:on("game.ready", function(payload)
       end
     end
   end
-  if fixed > 0 then
-    mod.log:info("widened encounter buckets on %d tables", fixed)
+  -- Always printed, even at zero.  "0 slots added" is the single most useful
+  -- diagnostic when routes look vanilla, and there is no log FILE to dig
+  -- through -- Logger uses print, so this only appears on stdout.
+  mod.log:info("wild reconcile: %d slots added, %d bucket tables widened",
+    addedSlots, fixed)
+end)
+
+-- Re-apply on every map entry as well.
+--
+-- game.ready alone SHOULD be enough: Data:load() runs once (src/core/Game.lua)
+-- and game.ready is emitted after it, while OverworldController reads
+-- `Game.data.encounters[self.map.id]` live on every step.  But routes stayed
+-- vanilla through several rounds of otherwise-correct fixes, so this stops
+-- assuming that reasoning is complete.  If anything reloads or re-folds Data
+-- after boot, the next map entry repairs it.
+--
+-- Safe to run repeatedly: applyPlacement is idempotent by species membership
+-- and widenBuckets only fires when a table's bucket count disagrees with its
+-- slot count, so the steady state is a couple of table scans and no writes.
+mod.events:on("map.entered", function(payload)
+  local game = payload and (payload.game or payload)
+  if not (game and game.data) then
+    -- map.entered does not promise to carry the game; the module singleton is
+    -- the same table Data:load() populated
+    local ok, GameModule = pcall(require, "src.core.Game")
+    if ok then game = GameModule end
+  end
+  local encounters = game and game.data and game.data.encounters
+  if type(encounters) ~= "table" then return end
+
+  if encounterMode ~= "dataonly" then
+    local contested = {}
+    if respect then
+      for _, id in ipairs(Data.CONTESTED_MAPS or {}) do contested[id] = true end
+    end
+    applyPlacement(encounters, Data.PLACEMENT, contested)
+  end
+
+  for _, def in pairs(encounters) do
+    if type(def) == "table" then
+      for _, kind in ipairs({ "grass", "water" }) do
+        local table_ = def[kind]
+        if type(table_) == "table" and type(table_.slots) == "table" then
+          local slots = #table_.slots
+          local current = table_.buckets and #table_.buckets or nil
+          if slots > VANILLA_SLOTS and current ~= slots then
+            local rebuilt = widenBuckets(slots)
+            if rebuilt then table_.buckets = rebuilt end
+          end
+        end
+      end
+    end
   end
 end)
