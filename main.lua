@@ -61,8 +61,13 @@ end
 local Data = loadModule("data/species.lua")
 local NewMoves = loadModule("data/moves.lua")
 local Retro = loadModule("data/retro.lua")
+-- Vanilla retypes, per-species party icons, and the Gen 1 status-move set.
+-- Hand-editable; see the header of that file.  Loaded BEFORE src/moves.lua,
+-- which takes STATUS_MOVES as a chunk argument.
+local Overrides = loadModule("data/overrides.lua")
 local GrowthRates = loadModule("src/growth_rates.lua")
-local Moves = loadModule("src/moves.lua", NewMoves, Retro)
+local Moves = loadModule("src/moves.lua", NewMoves, Retro,
+  Overrides.STATUS_MOVES)
 local Encounters = loadModule("src/encounters.lua")
 local Starters = loadModule("src/starters.lua")
 local Icons = loadModule("src/icons.lua")
@@ -184,6 +189,17 @@ mod.options:define({
     } },
   { key = "starterSeed", label = "STARTER SEED", type = "text",
     default = "", maxLen = 24 },
+  -- How much of a widened table's encounter roll goes to the NEW species.
+  -- An even split leaves the vanilla ten at half the roll, and because Route 1
+  -- fills several of its slots with the same Pidgey and Rattata, that reads as
+  -- "still mostly Rattata" even when the additions are all present.
+  { key = "newShare", label = "NEW SPECIES SHARE", type = "choice",
+    default = "most",
+    choices = {
+      { "EVEN (50%)", "even" },
+      { "FAVOUR NEW (70%)", "most" },
+      { "MOSTLY NEW (85%)", "dominant" },
+    } },
 })
 
 local encounterMode = mod.options:get("encounterMode") or "extended"
@@ -193,6 +209,8 @@ local respect = mod.options:get("respectOtherMods")
 if respect == nil then respect = true end
 local starterMode = mod.options:get("starters") or "vanilla"
 local starterSeed = mod.options:get("starterSeed") or ""
+local NEW_SHARE = { even = 0.50, most = 0.70, dominant = 0.85 }
+local newShare = NEW_SHARE[mod.options:get("newShare") or "most"] or 0.70
 
 -- ----------------------------------------------------------- growth rates
 -- Gen 1 ships five curves; Gen 2+ species also use ERRATIC and FLUCTUATING.
@@ -338,13 +356,43 @@ end
 report.species, report.skipped = registered, skipped
 mod.log:info("registered %d species (%d skipped)", registered, skipped)
 
+-- ------------------------------------------------------- vanilla retypes
+-- Registering STEEL / DARK / FAIRY does not retype anything by itself.
+-- Magnemite stayed pure Electric because it lives in the ENGINE's dataset,
+-- not ours, so its record has to be patched.  Seven species in 1-151 changed
+-- typing after Gen 1; without this the new types are half-present, which is
+-- worse than not having them (Magnemite reads as Steel-weak but is not).
+--
+-- MODERN only.  In RETRO the whole point is Kanto's original fifteen types,
+-- so the vanilla records are left exactly as the ROM had them.
+
+if moveMode ~= "retro" then
+  local retyped = 0
+  for id, types in pairs(Overrides.RETYPES or {}) do
+    local ok = pcall(function()
+      mod.content.pokemon:patch(id, { types = types })
+    end)
+    if ok then
+      retyped = retyped + 1
+    else
+      mod.log:warn("could not retype %s", id)
+    end
+  end
+  report.retyped = retyped
+  mod.log:info("retyped %d vanilla species onto modern typings", retyped)
+else
+  report.retyped = 0
+end
+
 -- ------------------------------------------------------------ party icons
 -- Assigned AFTER species registration so every id exists in the registry.
 -- icons.byDex only covers dex 1..151, so without this every new species drew
--- no figure at all in the party menu.
+-- no figure at all in the party menu.  ICON_GROUPS in data/overrides.lua is
+-- the single place a species' figure is set.
 
 do
-  local counts = Icons.apply(mod, Data.SPECIES)
+  local counts = Icons.apply(mod, Data.SPECIES,
+    Icons.expand(Overrides.ICON_GROUPS))
   local n = 0
   for _, c in pairs(counts or {}) do n = n + c end
   report.icons = n
@@ -443,15 +491,24 @@ local VANILLA_SLOTS = #VANILLA_BUCKETS
 -- reweighted too.
 --
 -- Instead the original ten keep their vanilla PROPORTIONS, compressed into
--- the share of the table they still occupy, and the appended rows split the
--- remainder evenly.  With 10 vanilla + 10 added, the vanilla roster keeps
--- half the encounters and its internal rarity ordering intact.
-local function widenBuckets(slots)
+-- whatever share of the roll they still hold, and the appended rows split the
+-- remainder evenly.  The vanilla curve survives; only its total weight shrinks.
+--
+-- That total is the NEW SPECIES SHARE option, and it defaults to 70% new
+-- rather than an even split.  A 50/50 table still reads as "mostly Rattata",
+-- because Route 1 spends several of its ten vanilla slots on the SAME two
+-- species while each new one appears once -- so an even split by table is a
+-- lopsided split by species.
+local function widenBuckets(slots, share)
   local out = {}
   local base = math.min(VANILLA_SLOTS, slots)
   local extra = slots - base
   if extra <= 0 then return nil end -- nothing added: leave the table alone
-  local split = math.floor(256 * base / slots + 0.5)
+  share = share or 0.70
+  local split = math.floor(256 * (1 - share) + 0.5)
+  -- leave room for one threshold per appended row
+  if split > 256 - extra then split = 256 - extra end
+  if split < base then split = base end
   for i = 1, base do
     out[i] = math.floor(VANILLA_BUCKETS[i] * split / 256 + 0.5)
     if i > 1 and out[i] <= out[i - 1] then out[i] = out[i - 1] + 1 end
@@ -538,7 +595,7 @@ mod.events:on("game.ready", function(payload)
           -- its own.  A 10-slot table is left completely alone so it keeps
           -- using constants.encounterBuckets, exactly as vanilla does.
           if slots > VANILLA_SLOTS and current ~= slots then
-            local rebuilt = widenBuckets(slots)
+            local rebuilt = widenBuckets(slots, newShare)
             if rebuilt then
               table_.buckets = rebuilt
               fixed = fixed + 1
@@ -609,7 +666,7 @@ mod.events:on("map.entered", function(payload)
           local slots = #table_.slots
           local current = table_.buckets and #table_.buckets or nil
           if slots > VANILLA_SLOTS and current ~= slots then
-            local rebuilt = widenBuckets(slots)
+            local rebuilt = widenBuckets(slots, newShare)
             if rebuilt then table_.buckets = rebuilt end
           end
         end
