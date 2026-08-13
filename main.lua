@@ -70,6 +70,12 @@ local Icons = loadModule("src/icons.lua")
 -- held-item / time-of-day / known-move conditions turned into plain levels).
 -- Kept out of data/species.lua so the hand-checked rows stay reviewable.
 local EvolutionsExtra = loadModule("data/evolutions_extra.lua")
+-- Writes a report FILE, because Logger only prints to stdout and a fused
+-- gen1recomp.exe has no console attached to read it from.
+local Diagnostics = loadModule("src/diagnostics.lua")
+
+-- Collected as the entry chunk runs, then dumped at game.ready.
+local report = {}
 
 -- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
 -- locally rather than committed (tools/build_dex_entries.py).  Without it the
@@ -86,7 +92,9 @@ do
   if chunk then ok, loaded = pcall(chunk) end
   if ok and type(loaded) == "table" then
     DexEntries = loaded
+    report.dexEntriesFile = true
   else
+    report.dexEntriesFile = false
     mod.log:warn("data/dex_entries.lua not found; new species will show "
       .. "\"Data unknown.\" in the Pokedex.  Generate it with "
       .. "python3 tools/build_dex_entries.py")
@@ -215,6 +223,7 @@ for key, body in pairs(DexEntries.TEXT or {}) do
   end
   if ok then textCount = textCount + 1 end
 end
+report.texts = textCount
 mod.log:info("registered %d dex entry texts", textCount)
 
 -- ------------------------------------------------------- types and moves
@@ -326,6 +335,7 @@ for _, record in ipairs(Data.SPECIES) do
   end
 end
 
+report.species, report.skipped = registered, skipped
 mod.log:info("registered %d species (%d skipped)", registered, skipped)
 
 -- ------------------------------------------------------------ party icons
@@ -333,7 +343,12 @@ mod.log:info("registered %d species (%d skipped)", registered, skipped)
 -- icons.byDex only covers dex 1..151, so without this every new species drew
 -- no figure at all in the party menu.
 
-Icons.apply(mod, Data.SPECIES)
+do
+  local counts = Icons.apply(mod, Data.SPECIES)
+  local n = 0
+  for _, c in pairs(counts or {}) do n = n + c end
+  report.icons = n
+end
 
 -- --------------------------------------------------------------- starters
 -- After species registration on purpose: a non-Kanto trio names species this
@@ -381,12 +396,29 @@ if encounterMode == "dataonly" then
   mod.log:info("DATA ONLY: no encounter tables written; wild placement is "
     .. "left to the randomizer or another mod")
 else
-  Encounters.apply(mod, Data, {
+  report.registryPlaced = Encounters.apply(mod, Data, {
     extended = encounterMode == "extended",
     available = available,
     subsetSeed = subsetSeed,
     respectOtherMods = respect,
   })
+end
+
+do
+  local rows, maps = 0, 0
+  for _, kinds in pairs(Data.PLACEMENT or {}) do
+    maps = maps + 1
+    for _, list in pairs(kinds) do rows = rows + #list end
+  end
+  report.placementRows, report.placementMaps = rows, maps
+  report.encounterMode = encounterMode
+  report.available = available
+  report.moveMode = moveMode
+  report.starterMode = starterMode
+  report.respect = respect
+  report.moves = 0
+  for _ in pairs(NewMoves) do report.moves = report.moves + 1 end
+  report.types, report.matchups = 3, 38
 end
 
 -- ------------------------------------- runtime bucket reconciliation
@@ -523,6 +555,19 @@ mod.events:on("game.ready", function(payload)
   -- through -- Logger uses print, so this only appears on stdout.
   mod.log:info("wild reconcile: %d slots added, %d bucket tables widened",
     addedSlots, fixed)
+
+  report.addedLive = addedSlots
+  report.yielded = 0
+  for _, id in ipairs(Data.CONTESTED_MAPS or {}) do
+    if respect and Data.PLACEMENT[id] then report.yielded = report.yielded + 1 end
+  end
+  report.widened = fixed
+  local wrote, where = Diagnostics.write(mod, report, encounters, Data.PLACEMENT)
+  if wrote then
+    mod.log:info("diagnostics written to %s", tostring(where))
+  else
+    mod.log:warn("could not write diagnostics: %s", tostring(where))
+  end
 end)
 
 -- Re-apply on every map entry as well.
