@@ -66,6 +66,51 @@ local Moves = loadModule("src/moves.lua", NewMoves, Retro)
 local Encounters = loadModule("src/encounters.lua")
 local Starters = loadModule("src/starters.lua")
 
+-- Wild placement lives in its own generated file, attached onto the same
+-- Data table src/encounters.lua reads.  Rows are APPENDED to the vanilla
+-- ten, never substituted for them, so Kanto's own roster survives
+-- underneath (tools/build_placement.lua).
+-- Rows are stored compactly as { level, "SPECIES" }; normalise them to the
+-- shape src/encounters.lua and the engine expect.
+Data.PLACEMENT = loadModule("data/placement.lua")
+for _, kinds in pairs(Data.PLACEMENT) do
+  for _, rows in pairs(kinds) do
+    for i, row in ipairs(rows) do
+      if row.species == nil then
+        rows[i] = { level = row[1], species = row[2] }
+      end
+    end
+  end
+end
+
+-- Maps All_Pokemon_Catchable_151_Mod authors wholesale, taken from its
+-- source rather than guessed.  With YIELD TO OTHER MODS on we skip these:
+-- appending is non-destructive, but that mod's placement is deliberate and
+-- ours is heuristic, so theirs should win where they overlap.
+--
+-- Conditional on that mod ACTUALLY being installed.  Yielding
+-- unconditionally would hand away 33 of 58 tables -- most of the roster --
+-- to a mod that may not be present, which is worse than not yielding at all.
+local CATCHABLE_151_MAPS = {
+  "CERULEAN_CAVE_1F", "CERULEAN_CAVE_2F", "CERULEAN_CAVE_B1F",
+  "POKEMON_MANSION_B1F", "POWER_PLANT",
+  "ROUTE_3", "ROUTE_4", "ROUTE_5", "ROUTE_6", "ROUTE_7", "ROUTE_8",
+  "ROUTE_9", "ROUTE_11", "ROUTE_12", "ROUTE_13", "ROUTE_14", "ROUTE_15",
+  "ROUTE_21", "ROUTE_22", "ROUTE_23", "ROUTE_24", "ROUTE_25",
+  "SAFARI_ZONE_CENTER", "SAFARI_ZONE_EAST", "SAFARI_ZONE_NORTH",
+  "SAFARI_ZONE_WEST",
+  "SEAFOAM_ISLANDS_B2F", "SEAFOAM_ISLANDS_B3F", "SEAFOAM_ISLANDS_B4F",
+  "VICTORY_ROAD_1F", "VICTORY_ROAD_2F", "VICTORY_ROAD_3F",
+  "VIRIDIAN_FOREST",
+}
+if mod.find and mod.find("all_pokemon_catchable_151_mod") then
+  Data.CONTESTED_MAPS = CATCHABLE_151_MAPS
+  mod.log:info("all_pokemon_catchable_151_mod detected: yielding %d maps",
+    #CATCHABLE_151_MAPS)
+else
+  Data.CONTESTED_MAPS = {}
+end
+
 -- ---------------------------------------------------------------- options
 
 mod.options:define({
