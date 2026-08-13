@@ -1,6 +1,7 @@
 #!/bin/sh
 # Every gate, in the order that catches problems earliest.
-# Optional arg: path to a gen1recomp checkout, which enables the manifest gate.
+# Optional arg: path to a gen1recomp checkout, which enables the manifest and
+# schema gates.
 #
 #   sh tests/run_all.sh /path/to/gen1recomp
 set -e
@@ -15,3 +16,6 @@ luajit tests/load_test.lua
 echo
 echo "--- 4. starter trios: species exist, no soft-lock, rival chain intact"
 luajit tests/starter_test.lua
+echo
+echo "--- 5. encounter payload vs the engine's own schema validator"
+luajit tests/encounter_schema_test.lua "$1"
