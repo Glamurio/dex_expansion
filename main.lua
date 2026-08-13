@@ -66,6 +66,28 @@ local Moves = loadModule("src/moves.lua", NewMoves, Retro)
 local Encounters = loadModule("src/encounters.lua")
 local Starters = loadModule("src/starters.lua")
 
+-- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
+-- locally rather than committed (tools/build_dex_entries.py).  Without it the
+-- Pokedex falls back to "Data unknown." for the new species, which is a
+-- cosmetic loss -- so a missing file must not stop the mod loading.
+local DexEntries = { ENTRIES = {}, TEXT = {} }
+do
+  -- read directly rather than via loadModule: that helper logs a
+  -- "reinstall the mod" ERROR, which is the wrong signal for a file that is
+  -- meant to be optional
+  local source = mod:read("data/dex_entries.lua")
+  local chunk = source and compile(source, "@data/dex_entries.lua")
+  local ok, loaded = false, nil
+  if chunk then ok, loaded = pcall(chunk) end
+  if ok and type(loaded) == "table" then
+    DexEntries = loaded
+  else
+    mod.log:warn("data/dex_entries.lua not found; new species will show "
+      .. "\"Data unknown.\" in the Pokedex.  Generate it with "
+      .. "python3 tools/build_dex_entries.py")
+  end
+end
+
 -- Wild placement lives in its own generated file, attached onto the same
 -- Data table src/encounters.lua reads.  Rows are APPENDED to the vanilla
 -- ten, never substituted for them, so Kanto's own roster survives
@@ -173,6 +195,23 @@ for id, fn in pairs(GrowthRates.CURVES) do
   end
 end
 
+-- --------------------------------------------------------- dex entries
+-- Without a `dexEntry` the Pokedex draws "Data unknown." and prints no
+-- height or weight (src/ui/DexEntryMenu.lua).  `text` is a KEY into the
+-- `text` registry -- `game.data.text[e.text]` -- not a literal, so the
+-- strings have to be registered too or the key resolves to nil and the
+-- screen falls back to "Data unknown." anyway.
+
+local textCount = 0
+for key, body in pairs(DexEntries.TEXT or {}) do
+  local ok = pcall(function() mod.content.text:register(key, body) end)
+  if not ok then
+    ok = pcall(function() mod.content.text:override(key, body) end)
+  end
+  if ok then textCount = textCount + 1 end
+end
+mod.log:info("registered %d dex entry texts", textCount)
+
 -- ------------------------------------------------------- types and moves
 -- Runs BEFORE species registration: `types` and `level1Moves` are
 -- f.id() cross-references, so the targets must be registered first or the
@@ -223,8 +262,30 @@ local function validate(record)
   return nil
 end
 
+-- Sprite paths in data/species.lua are MOD-relative ("assets/front/152.png").
+-- src/pokemon/Sprites.lua uses def.spriteFront as-is, resolved from the GAME
+-- root, so an unrewritten path silently finds nothing: the Pokedex draws no
+-- pic and a battle cannot build the mon at all -- the rival walks up and the
+-- fight never starts.  mod.assets:path() is the engine's own helper for this
+-- (Loader.lua: path = function(_, relative) return mod.path .. "/" .. relative).
+local function absolutise(record)
+  if mod.assets and mod.assets.path then
+    for _, key in ipairs({ "spriteFront", "spriteBack" }) do
+      local v = record[key]
+      -- idempotent: only rewrite our own relative paths
+      if type(v) == "string" and v:sub(1, 7) == "assets/" then
+        record[key] = mod.assets:path(v)
+      end
+    end
+  end
+  return record
+end
+
 for _, record in ipairs(Data.SPECIES) do
   record = Moves.rewrite(record, resolveMove, resolveTypes)
+  record = absolutise(record)
+  record.dexEntry = record.dexEntry
+    or (DexEntries.ENTRIES and DexEntries.ENTRIES[record.id])
   local bad = validate(record)
   if bad then
     skipped = skipped + 1
