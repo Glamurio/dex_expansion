@@ -3,13 +3,14 @@
 --
 -- What it proves, without needing the engine or a ROM:
 --   * the entry chunk runs clean under `chunk(api)` (Loader.lua:1157)
+--   * modules load through mod:read, the way the engine provides them
 --   * every species record passes the eligibility gate the mod validates
 --   * MODERN keeps STEEL / DARK / FAIRY and the new moves
 --   * RETRO leaves NO species typed with a post-Gen-1 type, and NO learnset
 --     entry pointing at a move that is not a Gen 1 move
 --   * every sprite path a record names exists on disk
 --
--- Run from the mod root:  lua tests/load_test.lua
+-- Run from the mod root:  luajit tests/load_test.lua
 
 -- Deliberately do NOT extend package.path.  The engine runs main.lua with
 -- LOVE's path pointing at the game, so a mod-relative require must fail --
@@ -56,6 +57,7 @@ end
 
 local function run(mode)
   local pokemon, moves, typechart, growth, encounters = {}, {}, {}, {}, {}
+  local mapScripts = {}
   local logs = { warn = {}, info = {} }
   local events = {}
   local api = {
@@ -66,6 +68,12 @@ local function run(mode)
       growth_rates = registry(growth, "growth_rates"),
       encounters = registry(encounters, "encounters"),
       constants = registry({}, "constants"),
+      -- compose registry: several contributions per map id are legal
+      map_scripts = { register = function(_, id, value)
+        mapScripts[id] = mapScripts[id] or {}
+        mapScripts[id][#mapScripts[id] + 1] = value
+        return true
+      end },
     },
     options = {
       define = function() end,
@@ -75,6 +83,8 @@ local function run(mode)
         if key == "available" then return "all" end
         if key == "subsetSeed" then return "" end
         if key == "respectOtherMods" then return true end
+        if key == "starters" then return "johto" end
+        if key == "starterSeed" then return "" end
       end,
     },
     log = {
@@ -85,7 +95,21 @@ local function run(mode)
     events = { on = function(_, name, fn) events[name] = fn end },
     find = function() return nil end,
     exports = {},
+    path = ".",
+    -- the engine's own seam (Loader.lua: `function api:read(relative)`).
+    -- Reading from disk here is the point: it proves main.lua loads its
+    -- modules the way the engine will, without a mod-relative require.
+    read = function(_, relative)
+      local fh = io.open(relative, "r")
+      if not fh then return nil, "no such file: " .. relative end
+      local body = fh:read("*a")
+      fh:close()
+      return body
+    end,
   }
+  api.log.error = function(_, f, ...)
+    logs.warn[#logs.warn + 1] = "ERROR " .. string.format(f, ...)
+  end
 
   local chunk = assert(loadfile("main.lua"))
   local ok, err = pcall(chunk, api)
@@ -115,10 +139,17 @@ local function run(mode)
   for id in pairs(typechart) do
     if id:find(">") then nMatch = nMatch + 1 else nTypes = nTypes + 1 end
   end
+  local nBalls = 0
+  for _, contributions in pairs(mapScripts) do
+    for _, c in ipairs(contributions) do
+      for _ in pairs(c.talk or {}) do nBalls = nBalls + 1 end
+    end
+  end
 
   return {
     species = nSpecies, moves = nMoves, types = nTypes, matchups = nMatch,
     badTypes = nBadType, badMoves = nBadMove, missingSprites = nMissingSprite,
+    starterBalls = nBalls,
     warnings = #logs.warn, hasGameReady = events["game.ready"] ~= nil,
     firstWarning = logs.warn[1],
   }
@@ -135,6 +166,7 @@ for _, mode in ipairs({ "modern", "retro" }) do
     print(("  species registered   %d"):format(r.species))
     print(("  moves registered     %d"):format(r.moves))
     print(("  types / matchups     %d / %d"):format(r.types, r.matchups))
+    print(("  starter ball handlers %d"):format(r.starterBalls))
     print(("  post-Gen1 typings    %d"):format(r.badTypes))
     print(("  non-Gen1 learn moves %d"):format(r.badMoves))
     print(("  missing sprite files %d"):format(r.missingSprites))
@@ -142,6 +174,7 @@ for _, mode in ipairs({ "modern", "retro" }) do
     print(("  warnings             %d%s"):format(r.warnings,
       r.firstWarning and ("  first: " .. r.firstWarning) or ""))
     if r.species ~= 498 or r.missingSprites > 0 then fail = true end
+    if r.starterBalls ~= 3 then fail = true end
     if mode == "retro" and (r.badTypes > 0 or r.badMoves > 0) then fail = true end
   end
 end
