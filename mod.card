@@ -1,0 +1,24 @@
+-- Sharing metadata: read by tooling and the manager detail pane.
+return {
+  summary = "498 more Pokemon, the moves they need, and the three types those moves require -- plus a RETRO mode that folds all of it back into Gen 1's fifteen.",
+  tags = { "content", "pokemon", "moves", "types" },
+  compat = { modApi = 2 },
+  differences = {
+    added = {
+      "National Dex 152-649 as real species, with sprites, learnsets and evolutions",
+      "STEEL, DARK and FAIRY as registered types, with 38 matchup rows",
+      "373 Gen 2-5 level-up moves, each reusing an existing Gen 1 animation",
+      "ERRATIC and FLUCTUATING experience curves, which Gen 1 never shipped",
+      "MOVES & TYPES option: MODERN, or RETRO GEN 1 for a fifteen-type game",
+    },
+    changed = {
+      "nothing in the vanilla dataset: species 1-151 are left untouched",
+    },
+    notes = {
+      "Existence is unconditional, availability is optional -- switching modes cannot scrub a save, but never REMOVE this mod from a live save",
+      "Use WILD PLACEMENT = DATA ONLY when the randomizer or a catchability mod owns wild encounters",
+      "FAIRY has only 3 level-up moves: learnsets come from Black 2/White 2, where the type did not exist yet",
+      "Back sprites are placeholders downscaled from the front pic",
+    },
+  },
+}
