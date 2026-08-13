@@ -16,6 +16,5 @@
   "description": "Registers National Dex 152-649 as real species, with the Gen 2-5 level-up moves they need and the STEEL / DARK / FAIRY types those moves require. Existence is unconditional and availability is optional, so no setting can ever orphan a species or move a save already knows. MODERN keeps real typings; RETRO GEN 1 retypes onto the original 15 and resolves every modern move to its nearest Gen 1 ancestor.",
   "games": [
     "gen1"
-  ],
-  "github": "(unreleased)"
+  ]
 }

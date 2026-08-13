@@ -19,8 +19,29 @@ by `tools/bundle.py`. Edit `src/` and `data/`, then rebuild:
 
 ```
 python3 tools/bundle.py
-sh tests/syntax_check.sh      # LuaJIT parse -- the check that matters
-luajit tests/load_test.lua    # both modes, offline
+sh tests/run_all.sh /path/to/gen1recomp
+```
+
+Three gates, each added after a real failure:
+
+1. **LuaJIT syntax.** LOVE runs LuaJIT, i.e. Lua 5.1 *syntax*. `~` `&` `|`
+   `<<` `>>` and `//` are Lua 5.3+: `luac -p` from 5.4 accepts them and
+   LuaJIT rejects the whole file, so a mod can pass a 5.4 check and still
+   fail to load.
+2. **Manifest**, validated by the engine's own `src/mods/Manifest.lua`. It is
+   pure -- no filesystem, no LOVE -- so it runs standalone and is the only
+   opinion that counts. Hand-checking against the docs does not work.
+3. **Load**, both modes, with mod-relative `require` actively forbidden so the
+   test cannot pass for the wrong reason.
+
+### Auto-update
+
+`github` is absent, which the engine reads as "no auto-update". To enable it,
+create a repo and add one line -- it must be `owner/repo` or a github.com URL,
+nothing else:
+
+```json
+"github": "Glamurio/gen1recomp-dex-expansion"
 ```
 
 **Validate with LuaJIT, never with `lua5.4`.** LOVE runs LuaJIT, i.e. Lua 5.1
