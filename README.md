@@ -1,145 +1,153 @@
 # Dex Expansion (Gen 2-5) for Gen1Recomp
 
-Registers National Dex **152-649** as real species, with the Gen 2-5 level-up
-moves they need and the STEEL / DARK / FAIRY types those moves require.
+Adds National Dex **152-649** as real species, the **373** Gen 2-5 level-up
+moves they need, and the **STEEL / DARK / FAIRY** types those moves require.
+Optionally swaps Oak's starters for any generation's trio.
+
+Everything can also be folded back into Gen 1's original fifteen types with
+`MOVES & TYPES = RETRO GEN 1`.
 
 ## Install
 
-Unzip into a folder inside your Gen1Recomp `mods/` directory, so you end up
-with `mods/dex_expansion/main.lua`. Enable it in the mod manager (F10).
+Copy the repository contents into a folder in your Gen1Recomp `mods/`
+directory so you end up with `mods/dex_expansion/main.lua`, then enable it in
+the mod manager (F10). Use an underscore in the folder name, not a space.
 
-Use an underscore in the folder name, not a space.
+To confirm it loaded, open the Pokedex: it should show **649** entries instead
+of 151. `dexSize` is derived from the highest `dex` in the merged registry, so
+that number is the whole data layer reporting in.
 
-**`main.lua` is generated.** A mod-relative `require` does not resolve at
-runtime -- the loader runs the entry file with LOVE's package path pointing at
-the game, not at the mod, so `require("data.species")` throws on the first
-line. Engine requires (`require("src.core.Strings")`) still work; mod-relative
-ones never do. So every module and every data table is inlined into one file
-by `tools/bundle.py`. Edit `src/` and `data/`, then rebuild:
+## Options
 
-```
-python3 tools/bundle.py
-sh tests/run_all.sh /path/to/gen1recomp
-```
+| Option | Values | Default |
+|---|---|---|
+| `MOVES & TYPES` | MODERN / RETRO GEN 1 | MODERN |
+| `STARTERS` | VANILLA (KANTO) / JOHTO / HOENN / SINNOH / UNOVA / RANDOM TRIO | VANILLA |
+| `STARTER SEED` | text | blank |
+| `WILD PLACEMENT` | EXTENDED SLOTS / VANILLA SLOTS / DATA ONLY | EXTENDED |
+| `SPECIES IN WILD` | ALL / RANDOM 151 | ALL |
+| `SUBSET SEED` | text | blank |
+| `YIELD TO OTHER MODS` | on / off | on |
 
-Three gates, each added after a real failure:
+**MODERN** keeps real typings and the new moves. **RETRO GEN 1** retypes onto
+the original fifteen (DARK to GHOST, STEEL to GROUND, FAIRY to NORMAL) and
+resolves every modern move to its nearest Gen 1 ancestor; a status move with
+no ancestor is dropped rather than faked into a damaging one.
 
-1. **LuaJIT syntax.** LOVE runs LuaJIT, i.e. Lua 5.1 *syntax*. `~` `&` `|`
-   `<<` `>>` and `//` are Lua 5.3+: `luac -p` from 5.4 accepts them and
-   LuaJIT rejects the whole file, so a mod can pass a 5.4 check and still
-   fail to load.
-2. **Manifest**, validated by the engine's own `src/mods/Manifest.lua`. It is
-   pure -- no filesystem, no LOVE -- so it runs standalone and is the only
-   opinion that counts. Hand-checking against the docs does not work.
-3. **Load**, both modes, with mod-relative `require` actively forbidden so the
-   test cannot pass for the wrong reason.
+**STARTERS** replaces the three balls in Oak's Lab. Slot types are preserved -
+left is fire, middle is water, right is grass, exactly as Charmander /
+Squirtle / Bulbasaur are - so the rival's counter-pick still works. RANDOM
+TRIO is seeded, so the same `STARTER SEED` always gives the same three.
 
-### Auto-update
-
-`github` is absent, which the engine reads as "no auto-update". To enable it,
-create a repo and add one line -- it must be `owner/repo` or a github.com URL,
-nothing else:
-
-```json
-"github": "Glamurio/gen1recomp-dex-expansion"
-```
-
-**Validate with LuaJIT, never with `lua5.4`.** LOVE runs LuaJIT, i.e. Lua 5.1
-*syntax*. The operators `~` `&` `|` `<<` `>>` and `//` are Lua 5.3+: `luac -p`
-from 5.4 accepts them and LuaJIT rejects the whole file, so a mod can pass a
-5.4 check and still fail to load. `tests/syntax_check.sh` exists to make that
-mistake impossible to repeat.
-
-The test refuses to add the mod directory to `package.path` and errors if a
-mod-relative require reaches the engine, so it cannot pass for the wrong
-reason.
+**Use `WILD PLACEMENT = DATA ONLY`** when the randomizer or a catchability mod
+owns wild encounters. That is the zero-conflict configuration.
 
 ## The one rule this mod is built on
 
 > **Existence is unconditional. Availability is optional.**
 
 Every species, move and type is registered on **every** boot, whatever the
-settings say. Nothing is ever withheld from a registry.
+settings say.
 
 That is a save-safety requirement, not a style choice. The engine's save
-scrubber (`src/core/SaveData.lua`) deletes Pokedex flags for species the
-dataset does not know, and blanks Hall of Fame entries the same way. Because
-mod options are *global* preferences rather than per-save state, a
-settings-driven roster would mean flipping one option silently destroys dex
-progress in every existing save. So the options below change where things
-**appear**, never whether they **exist**.
+scrubber deletes Pokedex flags for species the dataset does not know, and
+blanks Hall of Fame entries the same way. Because mod options are *global*
+preferences rather than per-save state, a settings-driven roster would mean
+flipping one option silently destroys dex progress in every existing save. So
+the options above change where things **appear**, never whether they
+**exist**.
 
-Corollary: it is still safe to switch modes, but **never remove this mod from
-a live save**.
-
-## Options
-
-| Option | Values | Default | Effect |
-|---|---|---|---|
-| `MOVES & TYPES` | MODERN / RETRO GEN 1 | MODERN | MODERN keeps real typings and the 373 new moves. RETRO retypes onto the original 15 (DARK->GHOST, STEEL->GROUND, FAIRY->NORMAL) and resolves every modern move to its nearest Gen 1 ancestor. |
-| `WILD PLACEMENT` | EXTENDED SLOTS / VANILLA SLOTS / DATA ONLY | EXTENDED | EXTENDED widens per-map slot tables so the roster fits. DATA ONLY writes no encounters at all. |
-| `SPECIES IN WILD` | ALL / RANDOM 151 | ALL | RANDOM 151 restricts which species *appear*, for a 1:1-feeling run. |
-| `SUBSET SEED` | text | blank | Seeds the 151 pick. |
-| `YIELD TO OTHER MODS` | on / off | on | Skip maps another mod already curated. |
-
-**Use `DATA ONLY`** when the randomizer or a catchability mod owns wild
-placement. That is the zero-conflict configuration.
+Switching modes is therefore safe. **Removing the mod from a live save is
+not.**
 
 ## Compatibility
 
-Verified by reading each mod's source:
-
 | Mod | Overlap |
 |---|---|
-| `pokemon_randomizer` | None. It reads the merged registry, so MERGED DATA picks these species up automatically. Declared as an optional dependency so `registerSpeciesMeta` load order is deterministic. |
-| `gen1recomp-modern-kanto` | Safe. It registers **no** types and **no** moves, only matchup multipliers and per-move `category`. Where we both write a matchup row the intent is identical. |
-| `All_Pokemon_Catchable_151` | Safe *because* we never touch the global bucket table. It writes bare 10-slot lists; widening `constants.encounterBuckets` globally would have left its maps with 10 dead buckets and silently halved their encounter rate. |
-| `Kanto-Reforged` | Real overlap - it authors encounters heavily. Use `DATA ONLY` or `YIELD TO OTHER MODS`. |
-| QoL mod | None. It only touches `screens`. |
+| `pokemon_randomizer` | None on data - it reads the merged registry, so MERGED DATA picks these species up. It also owns the Oak's Lab ball handlers, so `STARTERS` **yields entirely** when it is installed. Declared an optional dependency for deterministic load order. |
+| `modern_kanto` | Safe. It registers no types and no moves, only matchup multipliers and per-move `category`. Where both write a matchup row the intent is identical. |
+| `All_Pokemon_Catchable_151` | Safe, because this mod never touches the global bucket table. It writes bare 10-slot lists; widening `constants.encounterBuckets` globally would leave its maps with 10 dead buckets and silently halve their encounter rate. |
+| `Kanto-Reforged` | Real overlap - it authors encounters heavily. Use `DATA ONLY`. |
+| `quality_of_life` | None. It only touches `screens`. |
 
-Two engine details make cooperation work:
+Three engine details make cooperation work:
 
-1. `src/world/Encounter.lua` rolls `grass.buckets or buckets`, so an encounter
-   record can carry **its own** bucket table. We never modify the global
-   constant.
+1. `Encounter.roll` reads `grass.buckets or buckets`, so an encounter record
+   carries **its own** bucket table. The global constant is never modified.
 2. Encounter slots are written with `{ __append = rows }`. On a `record`
-   registry a bare list *replaces* wholesale; the wrapper appends, so two mods
-   adding rows to one map both land.
+   registry a bare list *replaces* wholesale; the wrapper appends.
+3. `map_scripts` is a **compose** registry, so the starter contribution
+   replaces only three talk keys and leaves the rest of Oak's Lab
+   engine-owned.
 
 A `game.ready` pass rebuilds bucket thresholds from the slot count that
-actually survived the merge, because a mod loading after us can still replace
-a slot list and desync the counts.
+survived the merge, since a mod loading later can still replace a slot list.
 
 ## Known limitations
 
-- **FAIRY has only 3 moves.** Learnsets come from Black 2/White 2, where Fairy
-  did not exist, so only retconned Gen 5 moves are present. Fairy works
-  correctly *defensively*. Rebuild against a Gen 6+ version group to fix.
+- **Wild placement is not authored yet.** `Data.PLACEMENT` is empty, so
+  `EXTENDED SLOTS` currently behaves like `DATA ONLY` and every route stays
+  vanilla - Route 1 really is still just Rattata and Pidgey. This is the next
+  feature, and it needs the map ids from a `data/generated/encounters.lua`.
+- **FAIRY has only 3 level-up moves.** Learnsets come from Black 2/White 2,
+  where the type did not exist. Fairy is correct *defensively*; nothing learns
+  Moonblast. Rebuilding against a Gen 6+ version group fixes it.
 - **264 of 373 new moves have no secondary effect.** Gen 1 has 82 effect
-  constants and most modern effects have no equivalent. Those moves have
-  correct type/power/accuracy/PP but do not proc.
-- **Back sprites are placeholders**, downscaled from the front pic (the engine
+  constants and most modern effects have no equivalent. Type, power, accuracy
+  and PP are right; they just do not proc.
+- **Back sprites are placeholders** downscaled from the front pic (the engine
   draws back pics at 2x from a 32x32 source).
-- 23 item-based and 34 friendship-based evolutions are not yet mapped.
+- 23 item-based and 34 friendship-based evolutions are not mapped.
 - 30 species fall back to a type-appropriate level-1 move.
-- Wild placement tables are not authored yet (`Data.PLACEMENT` is empty), so
-  EXTENDED currently behaves like DATA ONLY.
 
-## Rebuilding the data
+## Building
+
+`main.lua` is a thin entry point that loads `src/` and `data/` at runtime with
+`mod:read` plus `loadstring`, which is the sanctioned seam (and the one
+`quality_of_life` uses). A mod-relative `require` does **not** work: the loader
+runs the entry file with LOVE's package path pointing at the game, not at the
+mod, so `require("data.species")` throws on the first line. Engine requires
+like `require("src.core.Strings")` still work; mod-relative ones never do.
+Note `loadstring` rather than `load` - LOVE runs LuaJIT, i.e. Lua 5.1.
+
+Nothing is generated, so editing `src/` or `data/` takes effect directly:
+
+```
+sh tests/run_all.sh /path/to/gen1recomp
+```
+
+To regenerate the data itself:
 
 ```
 python3 tools/build_species_data.py --out data/species.lua
 python3 tools/build_moves.py --out-moves data/moves.lua --out-retro data/retro.lua
-python3 tools/split_spritesheet.py SHEET.png -o out/      # --mode dmg for 2bpp
-python3 tools/bundle.py                                   # REQUIRED after edits
-sh tests/syntax_check.sh                                  # LuaJIT parse gate
-luajit tests/load_test.lua                                # both modes, offline
+python3 tools/split_spritesheet.py SHEET.png -o out/    # --mode dmg for 2bpp
 ```
 
-Data sources are PokeAPI's CSV dumps and pret/pokered's constant files - public
+Sources are PokeAPI's CSV dumps and pret/pokered's constant files - public
 game facts, no ROM-derived bytes.
+
+### The four gates
+
+Each was added after a real failure, so none of them are ceremonial:
+
+1. **LuaJIT syntax.** LOVE runs LuaJIT, i.e. Lua 5.1 *syntax*. The operators
+   `~` `&` `|` `<<` `>>` and `//` are Lua 5.3+: `luac -p` from 5.4 accepts
+   them and LuaJIT rejects the whole file. **Never validate with lua5.4.**
+2. **Manifest**, checked by the engine's own `src/mods/Manifest.lua`. It is
+   pure - no filesystem, no LOVE - so it runs standalone and is the only
+   opinion that counts.
+3. **Load**, both move modes, with mod-relative `require` actively forbidden
+   so the test cannot pass for the wrong reason. Modules load through a
+   `mod:read` stub, the way the engine provides them.
+4. **Starters**, asserting on the generated script rows: every trio names a
+   registered species, `give_pokemon` fires with the right species and level,
+   `EVENT_GOT_STARTER` and the per-ball chose flag are both set, and the rival
+   never takes your species. Missing a flag write soft-locks the intro,
+   because Oak's script advances off them.
 
 ## Credits
 
-Sprite sheet is community Gen 1-style art (/vp/ lineage). Concept owes a debt to
-Sanqui's online randomizer.
+Sprite sheet is community Gen 1-style art (/vp/ lineage). The starter ball
+wiring follows the seam established by `ciddmandude/PokemonRecompRandomizer`.
+Concept owes a debt to Sanqui's online randomizer.
