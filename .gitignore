@@ -1,0 +1,4 @@
+*.pyc
+__pycache__/
+pk_*.csv
+pokered_*.asm
