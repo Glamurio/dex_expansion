@@ -4,13 +4,16 @@
 --     icons.bySpecies[species]  ->  def.icon  ->  icons.byDex[def.dex]
 --
 -- `icons.byDex` is the vanilla dex-indexed table and only covers 1..151, so
--- every species this mod adds fell through all three and drew NOTHING.  That
--- is why Treecko had no figure in the party menu.
+-- every species this mod adds fell through all three and drew NOTHING.
 --
 -- Gen 1 has exactly ten icon classes (tools/extract/icons.py): MON, BALL,
 -- HELIX, FAIRY, BIRD, WATER, BUG, GRASS, SNAKE, QUADRUPED.  They are shape
 -- classes, not per-species art -- any bird-ish thing gets BIRD -- so the job
 -- is to pick the closest class from what we know about a species.
+--
+-- The authoritative source is data/overrides.lua ICON_GROUPS, which is built
+-- from PokeAPI body shape and is meant to be hand-edited.  The type table
+-- below is only a fallback for a species missing from it.
 --
 -- Both slots are written: the `icons` registry (which folds into
 -- icons.bySpecies) and `def.icon` on the record, because PartyMenu consults
@@ -25,6 +28,10 @@ Icons.NAMES = {
 
 -- Checked in order; the first type that matches wins, so FLYING beating
 -- NORMAL is deliberate (a Pidgey-shaped thing is a bird first).
+--
+-- This is a FALLBACK ONLY.  Type is a poor predictor of silhouette -- it is
+-- what made Torchic a quadruped, because FIRE maps there and the shape branch
+-- was reading a field that did not exist.
 local BY_TYPE = {
   { "FLYING", "BIRD" },
   { "BUG", "BUG" },
@@ -46,28 +53,8 @@ local BY_TYPE = {
   { "NORMAL", "QUADRUPED" },
 }
 
--- PokeAPI body shapes, where we have them, beat the type guess: shape is a
--- much better predictor of which ten-way silhouette fits.  Ids come from
--- pokemon_shapes: 1 ball, 2 squiggle, 3 fish, 4 arms, 5 blob, 6 upright,
--- 7 legs, 8 quadruped, 9 wings, 10 tentacles, 11 heads, 12 humanoid,
--- 13 bug-wings, 14 armor.  Only the unambiguous ones are mapped; the rest
--- fall through to type, which handles them better than a wrong silhouette.
-local BY_SHAPE = {
-  ["1"] = "BALL",       -- ball
-  ["2"] = "SNAKE",      -- squiggle
-  ["3"] = "WATER",      -- fish
-  ["8"] = "QUADRUPED",  -- quadruped
-  ["9"] = "BIRD",       -- wings
-  ["10"] = "WATER",     -- tentacles
-  ["13"] = "BUG",       -- bug-wings
-  ["14"] = "BUG",       -- armor
-}
-
--- Pick an icon class for one species record.
+-- Pick an icon class for one species record from its types alone.
 function Icons.forRecord(record)
-  local ext = record.dexExpansion or {}
-  local byShape = BY_SHAPE[tostring(ext.shape or "")]
-  if byShape then return byShape end
   local types = {}
   for _, t in ipairs(record.types or {}) do types[t] = true end
   for _, row in ipairs(BY_TYPE) do
@@ -76,10 +63,28 @@ function Icons.forRecord(record)
   return "MON"
 end
 
-function Icons.apply(mod, records)
+-- Expand data/overrides.lua ICON_GROUPS ("BIRD = \"TORCHIC PIPLUP ...\"") into
+-- a species -> icon lookup.  Stored inverted in the data file because moving a
+-- name between ten lists is a far easier edit than hunting one row out of 498.
+function Icons.expand(groups)
+  local out = {}
+  for name, list in pairs(groups or {}) do
+    if Icons.NAMES[name] then
+      for id in tostring(list):gmatch("[A-Z0-9_]+") do out[id] = name end
+    end
+  end
+  return out
+end
+
+-- `explicit` is that expanded lookup: a hand-editable id -> icon table
+-- generated from PokeAPI body shape.  It wins over the heuristics above,
+-- because shape predicts the ten-way silhouette far better than element does
+-- and because a human needs one obvious place to correct a wrong figure.
+function Icons.apply(mod, records, explicit)
   local counts, total = {}, 0
   for _, record in ipairs(records) do
-    local name = Icons.forRecord(record)
+    local name = (explicit and explicit[record.id]) or Icons.forRecord(record)
+    if not Icons.NAMES[name] then name = Icons.forRecord(record) end
     record.icon = record.icon or name
     local ok = pcall(function()
       mod.content.icons:register(record.id, name)

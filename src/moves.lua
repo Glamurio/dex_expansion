@@ -32,7 +32,13 @@
 -- mod-relative require does not resolve at runtime (the loader runs with
 -- LOVE's package path pointing at the game).  main.lua reads and compiles
 -- these with mod:read + loadstring, the same seam quality_of_life uses.
-local NewMoves, Retro = ...
+local NewMoves, Retro, statusList = ...
+-- data/overrides.lua ships STATUS_MOVES as one space-separated string; expand
+-- it to a set once here rather than scanning a list per species.
+local StatusMoves = {}
+for id in tostring(statusList or ""):gmatch("[A-Z0-9_]+") do
+  StatusMoves[id] = true
+end
 assert(type(NewMoves) == "table", "src/moves.lua needs data/moves.lua")
 assert(type(Retro) == "table", "src/moves.lua needs data/retro.lua")
 
@@ -143,6 +149,8 @@ function Moves.apply(mod, mode)
     return Retro[id]                            -- may be nil: drop it
   end
 
+  -- Dedupe matters here: a STEEL/GROUND species maps to GROUND/GROUND, and a
+  -- doubled type is not a dual type -- it should collapse to a single GROUND.
   local function resolveTypes(list)
     local out, seen = {}, {}
     for _, t in ipairs(list or {}) do
@@ -180,6 +188,22 @@ function Moves.rewrite(record, resolveMove, resolveTypes)
   -- rejects a species whose array is empty, which would silently drop it
   -- from the pool entirely.
   if #lvl1 == 0 then lvl1[1] = "TACKLE" end
+  -- ...and it must contain something that ATTACKS.  Ralts shipped knowing only
+  -- GROWL, which is unplayable: a freshly caught one cannot win a battle or
+  -- even chip a wild mon enough to catch it.  41 species were in that state.
+  -- data/overrides.lua STATUS_MOVES lists the Gen 1 moves that deal no damage;
+  -- fixed-damage and OHKO moves are deliberately absent from it, since Night
+  -- Shade and Seismic Toss are perfectly good attacks.
+  local canAttack = false
+  for _, id in ipairs(lvl1) do
+    local newMove = NewMoves[id]
+    if newMove then
+      if (newMove.power or 0) > 0 then canAttack = true end
+    elseif not StatusMoves[id] then
+      canAttack = true
+    end
+  end
+  if not canAttack then lvl1[#lvl1 + 1] = "TACKLE" end
   out.level1Moves = lvl1
 
   local learn = {}
