@@ -32,7 +32,29 @@
 -- mod-relative require does not resolve at runtime (the loader runs with
 -- LOVE's package path pointing at the game).  main.lua reads and compiles
 -- these with mod:read + loadstring, the same seam quality_of_life uses.
-local NewMoves, Retro, statusList = ...
+local NewMoves, Retro, statusList, fixes = ...
+fixes = fixes or {}
+
+-- data/move_fixes.lua: display names that fit the 12-character field, flat
+-- powers for moves whose power Gen 1 cannot compute, secondary effects mapped
+-- onto Gen 1's 82 constants, and the removal list for mechanics Gen 1 simply
+-- does not have.  Applied here rather than baked into data/moves.lua so the
+-- judgement calls stay in one reviewable file.
+local Removed = {}
+for id in tostring(fixes.REMOVE or ""):gmatch("[A-Z_0-9]+") do
+  Removed[id] = true
+  NewMoves[id] = nil   -- never registered, so it can never be selected
+  Retro[id] = nil
+end
+for id, name in pairs(fixes.NAMES or {}) do
+  if NewMoves[id] then NewMoves[id].name = name end
+end
+for id, power in pairs(fixes.POWERS or {}) do
+  if NewMoves[id] then NewMoves[id].power = power end
+end
+for id, effect in pairs(fixes.EFFECTS or {}) do
+  if NewMoves[id] then NewMoves[id].effect = effect end
+end
 -- data/overrides.lua ships STATUS_MOVES as one space-separated string; expand
 -- it to a set once here rather than scanning a list per species.
 local StatusMoves = {}
@@ -43,6 +65,8 @@ assert(type(NewMoves) == "table", "src/moves.lua needs data/moves.lua")
 assert(type(Retro) == "table", "src/moves.lua needs data/retro.lua")
 
 local Moves = {}
+
+Moves.REMOVED = Removed
 
 -- Gen 2's type split, which is what a Gen 1 engine can express.
 local NEW_TYPES = {
@@ -178,7 +202,7 @@ function Moves.rewrite(record, resolveMove, resolveTypes)
 
   local lvl1, seen = {}, {}
   for _, id in ipairs(record.level1Moves or {}) do
-    local r = resolveMove(id)
+    local r = not Removed[id] and resolveMove(id) or nil
     if r and not seen[r] then
       seen[r] = true
       lvl1[#lvl1 + 1] = r
@@ -206,9 +230,12 @@ function Moves.rewrite(record, resolveMove, resolveTypes)
   if not canAttack then lvl1[#lvl1 + 1] = "TACKLE" end
   out.level1Moves = lvl1
 
+  -- A removed move must also leave every learnset: learnset[].move is an
+  -- f.id("moves") reference, and a dangling one fails the post-merge
+  -- cross-check and takes the whole mod down, not just that row.
   local learn = {}
   for _, entry in ipairs(record.learnset or {}) do
-    local r = resolveMove(entry.move)
+    local r = not Removed[entry.move] and resolveMove(entry.move) or nil
     if r then learn[#learn + 1] = { level = entry.level, move = r } end
   end
   out.learnset = learn
