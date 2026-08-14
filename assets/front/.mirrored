@@ -1,0 +1,4 @@
+Front sprites in this directory have been mirrored to face LEFT
+by tools/mirror_fronts.py.  tools/back_sprites.py reads this file
+and un-mirrors on the way in, so back pics still face RIGHT.
+Delete this file only if you also un-mirror the sprites.
