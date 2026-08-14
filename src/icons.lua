@@ -3,21 +3,20 @@
 -- PartyMenu resolves an icon in this order (src/ui/PartyMenu.lua):
 --     icons.bySpecies[species]  ->  def.icon  ->  icons.byDex[def.dex]
 --
--- `icons.byDex` is the vanilla dex-indexed table and only covers 1..151, so
--- every species this mod adds fell through all three and drew NOTHING.
+-- `icons.byDex` is dex-indexed and covers 1..151 only, so anything past that
+-- needs an entry of its own or it draws nothing.
 --
--- Gen 1 has exactly ten icon classes (tools/extract/icons.py): MON, BALL,
--- HELIX, FAIRY, BIRD, WATER, BUG, GRASS, SNAKE, QUADRUPED.  They are shape
--- classes, not per-species art -- any bird-ish thing gets BIRD -- so the job
--- is to pick the closest class from what we know about a species.
+-- Gen 1 has ten icon classes (tools/extract/icons.py): MON, BALL, HELIX, FAIRY,
+-- BIRD, WATER, BUG, GRASS, SNAKE, QUADRUPED.  They are shape classes rather
+-- than per-species art, so the job is picking the closest fit.
 --
--- The authoritative source is data/overrides.lua ICON_GROUPS, which is built
--- from PokeAPI body shape and is meant to be hand-edited.  The type table
--- below is only a fallback for a species missing from it.
+-- data/overrides.lua ICON_GROUPS is the source of truth: built from PokeAPI
+-- body shape, and meant to be hand-edited.  The type table below is a fallback
+-- for anything missing from it.
 --
--- Both slots are written: the `icons` registry (which folds into
--- icons.bySpecies) and `def.icon` on the record, because PartyMenu consults
--- either and belt-and-braces costs nothing here.
+-- Both slots are written -- the `icons` registry, which folds into
+-- icons.bySpecies, and `def.icon` on the record -- since PartyMenu consults
+-- either.
 
 local Icons = {}
 
@@ -26,12 +25,11 @@ Icons.NAMES = {
   WATER = true, BUG = true, GRASS = true, SNAKE = true, QUADRUPED = true,
 }
 
--- Checked in order; the first type that matches wins, so FLYING beating
--- NORMAL is deliberate (a Pidgey-shaped thing is a bird first).
+-- Checked in order, first match wins, so Flying beating Normal is deliberate:
+-- a Pidgey-shaped thing is a bird first.
 --
--- This is a FALLBACK ONLY.  Type is a poor predictor of silhouette -- it is
--- what made Torchic a quadruped, because FIRE maps there and the shape branch
--- was reading a field that did not exist.
+-- Fallback only.  Type is a poor predictor of silhouette: it puts Torchic on
+-- the quadruped figure, because Fire maps there.
 local BY_TYPE = {
   { "FLYING", "BIRD" },
   { "BUG", "BUG" },
@@ -63,9 +61,9 @@ function Icons.forRecord(record)
   return "MON"
 end
 
--- Expand data/overrides.lua ICON_GROUPS ("BIRD = \"TORCHIC PIPLUP ...\"") into
--- a species -> icon lookup.  Stored inverted in the data file because moving a
--- name between ten lists is a far easier edit than hunting one row out of 498.
+-- Expand ICON_GROUPS ("BIRD = \"TORCHIC PIPLUP ...\"") into a species -> icon
+-- lookup.  Stored inverted in the data file because moving a name between ten
+-- lists is an easier edit than finding one row among 498.
 function Icons.expand(groups)
   local out = {}
   for name, list in pairs(groups or {}) do
@@ -76,10 +74,9 @@ function Icons.expand(groups)
   return out
 end
 
--- `explicit` is that expanded lookup: a hand-editable id -> icon table
--- generated from PokeAPI body shape.  It wins over the heuristics above,
--- because shape predicts the ten-way silhouette far better than element does
--- and because a human needs one obvious place to correct a wrong figure.
+-- `explicit` is that expanded lookup, and it wins over the type heuristic:
+-- shape predicts the ten-way silhouette better than element does, and a human
+-- needs one obvious place to correct a wrong figure.
 function Icons.apply(mod, records, explicit)
   local counts, total = {}, 0
   for _, record in ipairs(records) do
