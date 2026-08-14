@@ -2,12 +2,12 @@
 --
 -- The one architectural rule this mod is built around:
 --
---     EXISTENCE IS UNCONDITIONAL.  AVAILABILITY IS OPTIONAL.
+--     Existence is unconditional.  Availability is optional.
 --
 -- Every species in data/species.lua is registered on every boot, regardless
 -- of settings.  Nothing is ever withheld from the `pokemon` registry.
 --
--- That is not a style preference, it is a save-safety requirement.  The
+-- This is a save-safety requirement rather than a style preference.  The
 -- engine's save scrubber (src/core/SaveData.lua) deletes dex flags for
 -- species the dataset does not know:
 --
@@ -16,28 +16,24 @@
 --     end
 --
 -- ...and blanks Hall of Fame entries the same way.  Because mod options are
--- GLOBAL preferences rather than per-save state, a settings-driven roster
--- would mean flipping one option silently destroys dex progress in every
--- existing save.  So the "151 subset" option restricts where species APPEAR
--- (encounters, and trainer parties once that lands), never whether they
--- EXIST.
+-- global preferences rather than per-save state, a settings-driven roster
+-- would mean flipping one option destroys dex progress in every existing save.
+-- So the "151 subset" option restricts where species appear -- encounters, and
+-- trainer parties -- never whether they exist.
 --
--- Verified against gen1recomp:
---   * species are string-keyed and saves are Lua source, so there is no
---     255-index ceiling anywhere in the gameplay path.
---   * constants.dexSize IS derived, but too early to see us -- see the dex
---     size section, which is why the Pokedex was stuck at 151.
+-- Species are string-keyed and saves are Lua source, so there is no 255-index
+-- ceiling anywhere in the gameplay path.  dexSize is a different story -- see
+-- the dex size section.
 
 local mod = ...
 
 -- ---------------------------------------------------------------- loading
--- A mod-relative `require` does NOT resolve at runtime: the loader runs this
--- file via chunk(api) with LOVE's package path pointing at the GAME, not at
+-- A mod-relative `require` does not resolve at runtime: the loader runs this
+-- file via chunk(api) with LOVE's package path pointing at the game, not at
 -- the mod, so require("data.species") throws on the first line.  Engine
--- requires (require("src.core.Strings")) still work; mod-relative ones never
--- do.  mod:read + loadstring is the sanctioned seam -- the same one
--- quality_of_life uses -- and `loadstring` is the Lua 5.1 spelling, which
--- matters because LOVE runs LuaJIT.
+-- requires (require("src.core.Strings")) still work.  mod:read + loadstring is
+-- the sanctioned seam -- the same one quality_of_life uses -- and `loadstring`
+-- is the Lua 5.1 spelling, which matters because LOVE runs LuaJIT.
 
 local compile = loadstring or load
 
@@ -60,23 +56,20 @@ end
 local Data = loadModule("data/species.lua")
 local NewMoves = loadModule("data/moves.lua")
 local Retro = loadModule("data/retro.lua")
--- Attacking FAIRY moves.  data/moves.lua comes from BW2 learnsets, where the
--- type did not exist, so it yields only CHARM / MOONLIGHT / SWEET_KISS -- all
--- power 0.  Fairy resisted and was immune to Dragon but could not attack with
--- its own type, which is a half-real type.  Merged in here so everything
--- downstream (registration, the RETRO ancestor map, the attack guarantee)
--- treats them like any other added move.
+-- Attacking Fairy moves.  data/moves.lua is built from BW2, which predates the
+-- type, so it yields only Charm, Moonlight and Sweet Kiss -- all power 0.
+-- Merged into NewMoves here so registration, the retro ancestor map and the
+-- attack guarantee treat them like any other added move.
 do
   local extra = loadModule("data/moves_extra.lua")
   for id in pairs(extra) do Retro[id] = Retro[id] or "SWIFT" end
   for id, record in pairs(extra) do NewMoves[id] = record end
 end
 -- Vanilla retypes, per-species party icons, and the Gen 1 status-move set.
--- Hand-editable; see the header of that file.  Loaded BEFORE src/moves.lua,
+-- Hand-editable; see the header of that file.  Loaded before src/moves.lua,
 -- which takes STATUS_MOVES as a chunk argument.
 local Overrides = loadModule("data/overrides.lua")
--- Correct typings for the 88 species whose STEEL/DARK/FAIRY slots
--- build_species_data.py dropped.  See that file's header.
+-- Correct typings for the 88 species carrying Steel, Dark or Fairy slots.
 local ModernTypes = loadModule("data/modern_types.lua")
 local GrowthRates = loadModule("src/growth_rates.lua")
 -- Move names that fit the 12-character field, flat powers for moves Gen 1
@@ -89,16 +82,15 @@ local Starters = loadModule("src/starters.lua")
 local Icons = loadModule("src/icons.lua")
 local Trainers = loadModule("src/trainers.lua")
 local TrainerOverrides = loadModule("data/trainer_overrides.lua")
--- Fairy attacking moves need someone to learn them, or the type is offensively
--- imaginary.  Hand-authored, and applied to live Data because `learnset` is a
--- list and a record patch would replace it wholesale.
+-- Level-up entries for the Fairy attacks.  Applied to live Data because
+-- `learnset` is a list and a record patch replaces lists wholesale.
 local FairyLearnsets = loadModule("data/fairy_learnsets.lua")
 -- Evolutions Gen 1 cannot express natively (stone remaps, and friendship /
 -- held-item / time-of-day / known-move conditions turned into plain levels).
 -- Kept out of data/species.lua so the hand-checked rows stay reviewable.
 local EvolutionsExtra = loadModule("data/evolutions_extra.lua")
--- Writes a report FILE, because Logger only prints to stdout and a fused
--- gen1recomp.exe has no console attached to read it from.
+-- Writes a report file.  Logger only prints to stdout, and a fused
+-- gen1recomp.exe has no console attached.
 local Diagnostics = loadModule("src/diagnostics.lua")
 
 -- Collected as the entry chunk runs, then dumped at game.ready.
@@ -106,12 +98,12 @@ local report = {}
 
 -- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
 -- locally rather than committed (tools/build_dex_entries.py).  Without it the
--- Pokedex falls back to "Data unknown." for the new species, which is a
--- cosmetic loss -- so a missing file must not stop the mod loading.
+-- Pokedex falls back to "Data unknown." for the new species, so a missing file
+-- must not stop the mod loading.
 local DexEntries = { ENTRIES = {}, TEXT = {} }
 do
   -- read directly rather than via loadModule: that helper logs a
-  -- "reinstall the mod" ERROR, which is the wrong signal for a file that is
+  -- "reinstall the mod" error, which is the wrong signal for a file that is
   -- meant to be optional
   local source = mod:read("data/dex_entries.lua")
   local chunk = source and compile(source, "@data/dex_entries.lua")
@@ -129,9 +121,9 @@ do
 end
 
 -- Wild placement lives in its own generated file, attached onto the same
--- Data table src/encounters.lua reads.  Rows are APPENDED to the vanilla
--- ten, never substituted for them, so Kanto's own roster survives
--- underneath (tools/build_placement.lua).
+-- Data table src/encounters.lua reads.  Rows are appended to the vanilla ten,
+-- never substituted for them, so Kanto's own roster survives underneath
+-- (tools/build_placement.lua).
 -- Rows are stored compactly as { level, "SPECIES" }; normalise them to the
 -- shape src/encounters.lua and the engine expect.
 Data.PLACEMENT = loadModule("data/placement.lua")
@@ -145,14 +137,13 @@ for _, kinds in pairs(Data.PLACEMENT) do
   end
 end
 
--- Maps All_Pokemon_Catchable_151_Mod authors wholesale, taken from its
--- source rather than guessed.  With YIELD TO OTHER MODS on we skip these:
--- appending is non-destructive, but that mod's placement is deliberate and
--- ours is heuristic, so theirs should win where they overlap.
+-- Maps All_Pokemon_Catchable_151_Mod authors wholesale, taken from its source
+-- rather than guessed.  With YIELD TO OTHER MODS on we skip these: appending is
+-- non-destructive, but that mod's placement is deliberate and ours is
+-- heuristic, so theirs should win where they overlap.
 --
--- Conditional on that mod ACTUALLY being installed.  Yielding
--- unconditionally would hand away 33 of 58 tables -- most of the roster --
--- to a mod that may not be present, which is worse than not yielding at all.
+-- Conditional on that mod actually being installed.  Yielding unconditionally
+-- would hand away 33 of 58 tables to a mod that may not be present.
 local CATCHABLE_151_MAPS = {
   "CERULEAN_CAVE_1F", "CERULEAN_CAVE_2F", "CERULEAN_CAVE_B1F",
   "POKEMON_MANSION_B1F", "POWER_PLANT",
@@ -190,16 +181,16 @@ mod.options:define({
     default = "", maxLen = 24 },
   { key = "respectOtherMods", label = "YIELD TO OTHER MODS",
     type = "toggle", default = true },
-  -- MODERN registers the new types and every Gen 2-5 level-up move.
-  -- RETRO registers them too -- existence is unconditional, so a saved mon
-  -- can never know a move that stops existing -- but resolves learnsets
-  -- through data/retro.lua and retypes species onto the original 15.
+  -- MODERN registers the new types and every Gen 2-5 level-up move.  RETRO
+  -- registers them too -- existence is unconditional, so a saved mon can never
+  -- know a move that stops existing -- but resolves learnsets through
+  -- data/retro.lua and retypes species onto the original 15.
   { key = "moveMode", label = "MOVES & TYPES", type = "choice",
     default = "modern",
     choices = { { "MODERN", "modern" }, { "RETRO GEN 1", "retro" } } },
   -- Which trio sits in Oak's Lab.  Slot types are preserved (left fire,
   -- middle water, right grass) so the rival's counter-pick still works.
-  -- src/starters.lua reads this at TALK time, so it applies without a reboot.
+  -- src/starters.lua reads this at talk time, so it applies without a restart.
   { key = "starters", label = "STARTERS", type = "choice",
     default = "vanilla",
     choices = {
@@ -209,20 +200,19 @@ mod.options:define({
       { "SINNOH", "sinnoh" },
       { "UNOVA", "unova" },
       { "RANDOM TRIO", "random" },
-      -- TEMPORARY: Aron (Steel), Houndour (Dark), Togepi (Fairy), each with a
+      -- Temporary: Aron (Steel), Houndour (Dark), Togepi (Fairy), each with a
       -- level-1 move of that type.  Remove this choice and TRIOS.typetest in
       -- src/starters.lua when the types are confirmed working.
       { "TYPE TEST (DUMMY)", "typetest" },
     } },
   { key = "starterSeed", label = "STARTER SEED", type = "text",
     default = "", maxLen = 24 },
-  -- Gen 1 has ONE Special stat; every species from Gen 2 on has two.  Which
-  -- one the single stat becomes is a real balance decision, not a detail:
-  -- SpA makes special attackers hit as hard as they should and leaves them
-  -- frail, SpD does the reverse, and the average flattens both.  Sanqui's
-  -- randomizer exposes the same choice.  SpA is the default because Gen 1's
-  -- own Special is the attacking number in practice -- it is what Alakazam
-  -- and Mewtwo are famous for.
+  -- Gen 1 has one Special stat; every species from Gen 2 on has two.  Which
+  -- one the single stat becomes is a balance decision, not a detail: SpA makes
+  -- special attackers hit as hard as they should and leaves them frail, SpD
+  -- does the reverse, and the average flattens both.  Sanqui's randomizer
+  -- exposes the same choice.  SpA is the default because Gen 1's own Special
+  -- is the attacking number in practice.
   { key = "specialMode", label = "SPECIAL STAT", type = "choice",
     default = "spa",
     choices = {
@@ -231,11 +221,10 @@ mod.options:define({
       { "AVERAGE", "average" },
     } },
   -- Hand-authored leader/E4 rosters, and duplicate slots replaced on ordinary
-  -- trainers.  Off would leave Kanto exactly as the ROM had it, which is a
-  -- reasonable thing to want alongside an expanded dex.
+  -- trainers.  Off leaves Kanto exactly as the ROM had it.
   { key = "modernTrainers", label = "MODERN TRAINERS", type = "toggle",
     default = true },
-  -- How much of a widened table's encounter roll goes to the NEW species.
+  -- How much of a widened table's encounter roll goes to the new species.
   -- An even split leaves the vanilla ten at half the roll, and because Route 1
   -- fills several of its slots with the same Pidgey and Rattata, that reads as
   -- "still mostly Rattata" even when the additions are all present.
@@ -254,7 +243,7 @@ local subsetSeed = mod.options:get("subsetSeed") or ""
 local respect = mod.options:get("respectOtherMods")
 if respect == nil then respect = true end
 -- Read only for the diagnostics report; src/starters.lua reads the live value
--- at talk time so the setting applies without a reboot.
+-- at talk time so the setting applies without a restart.
 local starterMode = mod.options:get("starters") or "vanilla"
 local specialMode = mod.options:get("specialMode") or "spa"
 local modernTrainers = mod.options:get("modernTrainers")
@@ -277,11 +266,11 @@ for id, fn in pairs(GrowthRates.CURVES) do
 end
 
 -- --------------------------------------------------------- dex entries
--- Without a `dexEntry` the Pokedex draws "Data unknown." and prints no
--- height or weight (src/ui/DexEntryMenu.lua).  `text` is a KEY into the
--- `text` registry -- `game.data.text[e.text]` -- not a literal, so the
--- strings have to be registered too or the key resolves to nil and the
--- screen falls back to "Data unknown." anyway.
+-- Without a `dexEntry` the Pokedex draws "Data unknown." and prints no height
+-- or weight (src/ui/DexEntryMenu.lua).  `text` is a key into the `text`
+-- registry -- `game.data.text[e.text]` -- not a literal, so the strings have to
+-- be registered too or the key resolves to nil and the screen falls back to
+-- "Data unknown." anyway.
 
 local textCount = 0
 for key, body in pairs(DexEntries.TEXT or {}) do
@@ -295,22 +284,22 @@ report.texts = textCount
 mod.log:info("registered %d dex entry texts", textCount)
 
 -- ------------------------------------------------------- types and moves
--- Runs BEFORE species registration: `types` and `level1Moves` are
--- f.id() cross-references, so the targets must be registered first or the
--- post-merge check fails the whole mod.
+-- Runs before species registration: `types` and `level1Moves` are f.id()
+-- cross-references, so the targets must be registered first or the post-merge
+-- check fails the whole mod.
 
 local moveMode = mod.options:get("moveMode") or "modern"
 local resolveMove, resolveTypes = Moves.apply(mod, moveMode)
 
 -- --------------------------------------------------------------- species
 -- Field names below are the extractor's own, taken from
--- gen1recomp/tools/extract/pokemon.py rather than from the schema's
--- idealized shape, so these records sit alongside the vanilla ones exactly.
+-- gen1recomp/tools/extract/pokemon.py rather than from the schema's idealized
+-- shape, so these records sit alongside the vanilla ones exactly.
 --
 -- The randomizer's eligibility gate (species_manifest.lua) additionally
--- requires: id matching the registry key, positive integer dex, all five
--- base stats as integers 1..255, >=1 type, non-empty growthRate, DENSE
--- level1Moves / learnset / evolutions arrays, and non-empty spriteFront AND
+-- requires: id matching the registry key, positive integer dex, all five base
+-- stats as integers 1..255, at least one type, non-empty growthRate, dense
+-- level1Moves / learnset / evolutions arrays, and non-empty spriteFront and
 -- spriteBack.  A record missing either sprite is silently excluded from the
 -- randomizer's pool, which is why sprite paths are mandatory here.
 
@@ -344,12 +333,11 @@ local function validate(record)
   return nil
 end
 
--- Sprite paths in data/species.lua are MOD-relative ("assets/front/152.png").
--- src/pokemon/Sprites.lua uses def.spriteFront as-is, resolved from the GAME
--- root, so an unrewritten path silently finds nothing: the Pokedex draws no
--- pic and a battle cannot build the mon at all -- the rival walks up and the
--- fight never starts.  mod.assets:path() is the engine's own helper for this
--- (Loader.lua: path = function(_, relative) return mod.path .. "/" .. relative).
+-- Sprite paths in data/species.lua are mod-relative ("assets/front/152.png"),
+-- and src/pokemon/Sprites.lua uses def.spriteFront as-is from the game root.
+-- An unrewritten path finds nothing, which leaves the Pokedex without a pic
+-- and stops a battle building the mon at all.  mod.assets:path() is the
+-- engine's helper for this.
 local function absolutise(record)
   if mod.assets and mod.assets.path then
     for _, key in ipairs({ "spriteFront", "spriteBack" }) do
@@ -366,9 +354,9 @@ end
 -- Resolve the single Special stat.  data/species.lua carries Sp. Attack in
 -- baseStats.special and Sp. Defense in dexExpansion.specialDefense.
 --
--- baseStats MUST be copied: Moves.rewrite returns a shallow copy, so the
--- baseStats table is still shared with the loaded dataset, and writing into it
--- would make the choice sticky across a mode switch within one boot.
+-- baseStats has to be copied first: Moves.rewrite returns a shallow copy, so
+-- the table is still shared with the loaded dataset and writing through it
+-- would make the choice sticky across a mode switch.
 local function resolveSpecial(record)
   local ext = record.dexExpansion or {}
   local spd = ext.specialDefense
@@ -386,17 +374,16 @@ local function resolveSpecial(record)
   return record
 end
 
--- TEMPORARY, for the TYPE TEST trio: give each dummy a level-1 move of its new
--- type.  Unlike the trio itself (read at talk time) this is baked at
--- registration, so switching to TYPE TEST needs one restart to take effect.
+-- Temporary, for the TYPE TEST trio: a level-1 move of each new type.  Unlike
+-- the trio itself, which is read at talk time, this is baked at registration,
+-- so switching to TYPE TEST takes one restart.
 --
--- Note this applies to the SPECIES record, so a trainer's Aron gets Metal Claw
--- too -- trainer parties draw their moves from the same learnset the player's
--- do.
+-- It applies to the species record, so a trainer's Aron gets Metal Claw too --
+-- trainer parties draw moves from the same learnset the player's do.
 local DUMMY_MOVES = {
-  ARON = "METAL_CLAW",       -- STEEL, 50 power, Scratch animation
-  HOUNDOUR = "CRUNCH",       -- DARK, 80 power, Bite animation
-  TOGEPI = "DAZZLING_GLEAM", -- FAIRY, 80 power, Swift animation
+  ARON = "METAL_CLAW",       -- Steel, 50 power, Scratch animation
+  HOUNDOUR = "CRUNCH",       -- Dark, 80 power, Bite animation
+  TOGEPI = "DAZZLING_GLEAM", -- Fairy, 80 power, Swift animation
 }
 local dummyActive = (mod.options:get("starters") == "typetest")
 local function applyDummyMoves(record)
@@ -410,10 +397,9 @@ local function applyDummyMoves(record)
   return record
 end
 
--- Correct the typing FIRST, so the RETRO resolver sees the real types and can
--- fold DARK->GHOST / STEEL->GROUND / FAIRY->NORMAL (and collapse a doubled
--- result to a single type).  Applying it after rewrite would leave RETRO
--- looking at the wrong input.
+-- Typing is corrected before the rewrite so the retro resolver sees the real
+-- types and can fold Dark to Ghost, Steel to Ground and Fairy to Normal,
+-- collapsing a doubled result to one type.
 local function applyModernTypes(record)
   local spec = ModernTypes[record.id]
   if not spec then return record end
@@ -470,21 +456,21 @@ report.species, report.skipped = registered, skipped
 mod.log:info("registered %d species (%d skipped)", registered, skipped)
 
 -- ------------------------------------------------------------- dex size
--- THE POKEDEX STAYED AT 151 BECAUSE OF LOAD ORDER, not because the constant
--- is hardcoded.  src/core/Game.lua does:
+-- dexSize has to be set explicitly.  src/core/Game.lua does:
 --
 --     Data:load()            -- runs seedDefaults(), which derives dexSize
---     self.mods:load(Data)   -- ...and only THEN merges our 498 species
+--     self.mods:load(Data)   -- and only then merges our 498 species
 --
--- and seedDefaults only derives when the value is absent:
+-- and seedDefaults only derives when the value is nil:
 --
 --     if constants.dexSize == nil then ... highest def.dex ... end
 --
--- So the derivation ran against the vanilla 151, stamped 151, and by the time
--- our species existed the field was no longer nil.  PokedexMenu then loops
--- `for n = 1, constants.dexSize or 151`, which is where the cap was visible.
--- Seen and owned are keyed by species id rather than index, so they follow
--- once the loop covers the full range.
+-- so it sees the vanilla 151 and stamps that.  PokedexMenu then loops
+-- `for n = 1, constants.dexSize or 151`.  Seen and owned are keyed by species
+-- id rather than index, so they follow once the loop covers the range.
+--
+-- The registry write below covers it; the game.ready pass covers another mod
+-- raising it higher than we would.
 
 do
   local highest = 0
@@ -492,11 +478,9 @@ do
     if record.dex > highest then highest = record.dex end
   end
   report.dexSize = highest
-  -- R.constants is a KEYED registry (Schemas.lua: `keys = { dexSize = ...,
-  -- dexDigits = ... }`), so each key is written on its own.  The first attempt
-  -- passed a whole table as the ID -- `constants:patch({ dexSize = ... })` --
-  -- which the pcall swallowed, and the Pokedex stayed at 151 with nothing in
-  -- the log to say why.
+  -- R.constants is keyed (`keys = { dexSize = ..., dexDigits = ... }`), so
+  -- each key is written on its own.  Passing a table as the id fails, and a
+  -- pcall would hide that, hence the warning below rather than silence.
   local wrote = 0
   for key, value in pairs({
     dexSize = highest,
@@ -520,16 +504,13 @@ do
 end
 
 -- ---------------------------------------------------------------- cries
--- data.audio.cries is keyed by SPECIES ID, and Sound.playCry accepts a
--- { file = path } definition, decoded by newFileSource -- so an .ogg per
--- species is all this needs.  No `cry` field on the record is required; the
--- lookup is by species.
+-- data.audio.cries is keyed by species id, and Sound.playCry takes a
+-- { file = path } definition decoded by newFileSource, so one .ogg per species
+-- is all this needs.  The record's `cry` field is not involved.
 --
--- Gen 3-5 cries are cleaner recordings than the Game Boy chip cries they sit
--- beside, so tools/lofi_cries.py band-limits and bit-crushes them offline
--- (see its header).  Nothing here filters at runtime: LOVE's Source:setFilter
--- needs an effects-capable device and this mod never owns the Source anyway --
--- Sound.playCry creates and caches it.
+-- Gen 3-5 files are band-limited offline by tools/lofi_cries.py.  Filtering at
+-- runtime is not an option: Source:setFilter needs an effects-capable device,
+-- and Sound.playCry owns and caches the Source.
 
 do
   local cries = 0
@@ -552,14 +533,11 @@ do
 end
 
 -- ------------------------------------------------------- vanilla retypes
--- Registering STEEL / DARK / FAIRY does not retype anything by itself.
--- Magnemite stayed pure Electric because it lives in the ENGINE's dataset,
--- not ours, so its record has to be patched.  Seven species in 1-151 changed
--- typing after Gen 1; without this the new types are half-present, which is
--- worse than not having them (Magnemite reads as Steel-weak but is not).
+-- Seven species in 1-151 changed typing after Gen 1.  They live in the
+-- engine's dataset rather than ours, so registering the new types does nothing
+-- to them and their records have to be patched directly.
 --
--- MODERN only.  In RETRO the whole point is Kanto's original fifteen types,
--- so the vanilla records are left exactly as the ROM had them.
+-- Modern only; retro leaves the vanilla records as the ROM had them.
 
 if moveMode ~= "retro" then
   local retyped = 0
@@ -580,10 +558,9 @@ else
 end
 
 -- ------------------------------------------------------------ party icons
--- Assigned AFTER species registration so every id exists in the registry.
--- icons.byDex only covers dex 1..151, so without this every new species drew
--- no figure at all in the party menu.  ICON_GROUPS in data/overrides.lua is
--- the single place a species' figure is set.
+-- After species registration, so every id exists in the registry.
+-- icons.byDex covers dex 1..151 only, so anything past that needs its own
+-- entry.  ICON_GROUPS in data/overrides.lua is where a figure is chosen.
 
 do
   local counts = Icons.apply(mod, Data.SPECIES,
@@ -598,17 +575,17 @@ end
 -- mod itself registers, so they have to be in the registry first.
 --
 -- No option is passed in: src/starters.lua reads STARTERS at talk time, which
--- is what makes changing it apply without a reboot.
+-- is what makes changing it apply without a restart.
 
 Starters.apply(mod)
 
 -- ------------------------------------------------- randomizer metadata
 -- exports.registerSpeciesMeta(id, { legendary = bool, stage = "basic" |
 -- "middle" | "final" }) freezes at mods.loaded, so this has to run in the
--- entry chunk.  Without it the randomizer derives stages itself and
--- legendary status falls back silently -- which is why the manifest
--- declares pokemon_randomizer as an OPTIONAL dependency: that is what makes
--- the load order deterministic rather than incidental.
+-- entry chunk.  Without it the randomizer derives stages itself and legendary
+-- status falls back silently -- which is why the manifest declares
+-- pokemon_randomizer as an optional dependency: that is what makes the load
+-- order deterministic rather than incidental.
 
 local function handOffMetadata()
   local randomizer = mod.find and mod.find("pokemon_randomizer")
@@ -674,7 +651,7 @@ end
 --     for i, threshold in ipairs(grass.buckets or buckets) do
 --       if pick < threshold then local slot = grass.slots[i] ...
 --
--- so bucket count and slot count MUST agree, and `buckets` cannot be declared
+-- so bucket count and slot count must agree, and `buckets` cannot be declared
 -- in the registry patch at all -- it is not a field of the encounters schema,
 -- and including it makes validation reject the whole patch.
 
@@ -685,20 +662,14 @@ local VANILLA_SLOTS = #VANILLA_BUCKETS
 
 -- Thresholds for a widened table.
 --
--- An EVEN spread here would be wrong, and was: it flattens Gen 1's rarity
--- curve, making the 1%-tail slot as common as the 20% lead slot.  Worse, the
--- pass below used to run on every map, so untouched vanilla routes got
--- reweighted too.
+-- An even spread across all twenty would flatten Gen 1's rarity curve, making
+-- the 1% tail slot as common as the 20% lead slot.  Instead the original ten
+-- keep their proportions, compressed into whatever share of the roll they
+-- still hold, and the appended rows split the remainder evenly.
 --
--- Instead the original ten keep their vanilla PROPORTIONS, compressed into
--- whatever share of the roll they still hold, and the appended rows split the
--- remainder evenly.  The vanilla curve survives; only its total weight shrinks.
---
--- That total is the NEW SPECIES SHARE option, and it defaults to 70% new
--- rather than an even split.  A 50/50 table still reads as "mostly Rattata",
--- because Route 1 spends several of its ten vanilla slots on the SAME two
--- species while each new one appears once -- so an even split by table is a
--- lopsided split by species.
+-- That share is the NEW SPECIES SHARE option, defaulting to 70% new.  An even
+-- split by table is a lopsided split by species: Route 1 spends several of its
+-- ten vanilla slots on the same two mons while each new one appears once.
 local function widenBuckets(slots, share)
   local out = {}
   local base = math.min(VANILLA_SLOTS, slots)
@@ -725,16 +696,12 @@ end
 
 -- Apply placement rows straight to live Data.
 --
--- The registry patch in src/encounters.lua is kept, but it is NOT trusted to
--- have landed: routes stayed vanilla through several rounds of fixes even
--- though the merge, the schema and the payload all check out in isolation.
--- Rather than keep guessing which layer eats the write, this reconciles
--- against the table the game actually rolls on -- the same live-Data approach
--- Kanto-Reforged falls back to, and the same game.ready pass that provably
--- works (it is what retargets the rival).
+-- The registry patch in src/encounters.lua is kept, but not relied on.  This
+-- reconciles against the table the game actually rolls on, which is the
+-- fallback Kanto-Reforged uses for the same reason.
 --
--- Idempotent by species membership, so it is a no-op for any row the registry
--- patch already delivered and cannot double-add on a hot reload.
+-- Idempotent by species membership: a no-op for any row the registry patch
+-- already delivered, and safe to re-run.
 local function applyPlacement(encounters, placement, contested)
   local added, maps = 0, 0
   for mapId, kinds in pairs(placement or {}) do
@@ -765,11 +732,9 @@ local function applyPlacement(encounters, placement, contested)
 end
 
 mod.events:on("game.ready", function(payload)
-  -- The game.ready payload is a WRAPPER: ModRuntime.emit("game.ready",
-  -- { game = self }) in src/core/Game.lua.  Taking the argument as the Game
-  -- itself makes payload.data nil, so the whole pass returned immediately and
-  -- did nothing -- silently.  That single mistake broke BOTH the rival
-  -- retarget and the encounter widening.
+  -- The payload is a wrapper: ModRuntime.emit("game.ready", { game = self }).
+  -- Reading payload.data instead of payload.game.data gives nil, and the pass
+  -- returns without doing anything.
   local game = payload and (payload.game or payload)
   local encounters = game and game.data and game.data.encounters
   if type(encounters) ~= "table" then return end
@@ -807,13 +772,12 @@ mod.events:on("game.ready", function(payload)
       end
     end
   end
-  -- Always printed, even at zero.  "0 slots added" is the single most useful
-  -- diagnostic when routes look vanilla, and there is no log FILE to dig
-  -- through -- Logger uses print, so this only appears on stdout.
+  -- Printed even at zero: "0 slots added" is the most useful line there is
+  -- when routes look vanilla.  Logger uses print, so this reaches stdout only.
   mod.log:info("wild reconcile: %d slots added, %d bucket tables widened",
     addedSlots, fixed)
 
-  -- Re-derive from the MERGED dataset and only ever raise.  Another mod may
+  -- Re-derive from the merged dataset and only ever raise.  Another mod may
   -- add species past ours, and seedDefaults cannot help by then.  Lowering
   -- would truncate someone else's roster, so max() rather than assignment.
   local constants = game.data and game.data.constants
@@ -833,17 +797,12 @@ mod.events:on("game.ready", function(payload)
     report.dexSizeFinal = constants.dexSize
   end
 
-  -- Move animations.
+  -- AnimPlayer:start resolves by move id -- `self.data.moveAnims[moveId]` --
+  -- not by the `anim` field on the record, so a new move needs an entry under
+  -- its own id or it draws nothing.
   --
-  -- AnimPlayer:start looks the animation up by MOVE ID -- `self.data.moveAnims
-  -- [moveId]` -- NOT by the `anim` field on the move record.  So a new move
-  -- with anim = "SCRATCH" got no animation at all: AnimPlayer warned once and
-  -- returned, which is why Metal Claw made a sound and shook the screen but
-  -- drew nothing.
-  --
-  -- Aliasing the table entry by reference is enough: the animation is data, and
-  -- pointing two move ids at the same script is exactly what "reuses Scratch's
-  -- animation" was always supposed to mean.
+  -- Aliasing by reference is enough: an animation is data, and pointing two
+  -- ids at one script is what reusing Scratch's animation means.
   do
     local anims = game.data and game.data.moveAnims
     local aliased, missing = 0, 0
@@ -922,16 +881,13 @@ end)
 
 -- Re-apply on every map entry as well.
 --
--- game.ready alone SHOULD be enough: Data:load() runs once (src/core/Game.lua)
--- and game.ready is emitted after it, while OverworldController reads
--- `Game.data.encounters[self.map.id]` live on every step.  But routes stayed
--- vanilla through several rounds of otherwise-correct fixes, so this stops
--- assuming that reasoning is complete.  If anything reloads or re-folds Data
--- after boot, the next map entry repairs it.
+-- game.ready should be enough on its own: Data:load() runs once and
+-- OverworldController reads `Game.data.encounters[self.map.id]` live on every
+-- step.  This is belt and braces -- if anything reloads or re-folds Data after
+-- boot, the next map entry repairs it.
 --
--- Safe to run repeatedly: applyPlacement is idempotent by species membership
--- and widenBuckets only fires when a table's bucket count disagrees with its
--- slot count, so the steady state is a couple of table scans and no writes.
+-- applyPlacement is idempotent and widenBuckets only fires when a bucket count
+-- disagrees with its slot count, so the steady state is two table scans.
 mod.events:on("map.entered", function(payload)
   local game = payload and (payload.game or payload)
   if not (game and game.data) then
