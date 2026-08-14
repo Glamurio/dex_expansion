@@ -6,27 +6,26 @@
 -- boots would be scrubbed off that mon.  Both modes therefore register
 -- every type and every move.  Only what the LEARNSETS point at changes.
 --
--- MODERN  species keep their real typing (STEEL / DARK / FAIRY included) and
+-- MODERN  species keep their real typing (Steel, Dark and Fairy included) and
 --         learn the real Gen 2-5 level-up moves.
--- RETRO   species are retyped onto the original 15 (DARK->GHOST,
---         STEEL->GROUND, FAIRY->NORMAL) and every modern move resolves to
---         its nearest Gen 1 ancestor via data/retro.lua.  A modern status
---         move with no ancestor is REMOVED from the learnset rather than
---         faked into a damaging move.
+-- RETRO   species are retyped onto the original 15 (Dark to Ghost, Steel to
+--         Ground, Fairy to Normal) and every modern move resolves to its
+--         nearest Gen 1 ancestor via data/retro.lua.  A modern status move
+--         with no ancestor leaves the learnset rather than being faked into a
+--         damaging move.
 --
--- Verified against the engine:
+-- Two engine facts this relies on:
 --   * src/mods/Schemas.lua R.type_chart takes types and matchups on ONE
 --     registry, told apart by whether the id contains ">":
 --         type    -> { name = ..., category = "physical"|"special" }
 --         matchup -> { multiplier = n }   -- n is x10 fixed point
 --   * src/battle/TypeChart.lua: "Gen 1 splits physical from special by TYPE,
---     not by move", and reads the per-type `category` from the merged
---     record.  So a new type carries its own damage class and works in the
---     Gen 1 damage model without the per-move split as a prerequisite.
---   * gen1recomp-modern-kanto registers NO types and NO moves -- it only
---     patches matchup multipliers and per-move `category`.  Nothing here
---     duplicates it; where both write the same matchup row the intent is
---     identical, so last-write-wins is harmless.
+--     not by move", and reads the per-type `category` from the merged record.
+--     So a new type carries its own damage class and works in the Gen 1 damage
+--     model without the per-move split as a prerequisite.
+--
+-- gen1recomp-modern-kanto registers no types and no moves -- it only patches
+-- matchup multipliers and per-move `category` -- so nothing here duplicates it.
 
 -- Data tables arrive as chunk arguments rather than through `require`: a
 -- mod-relative require does not resolve at runtime (the loader runs with
@@ -35,11 +34,10 @@
 local NewMoves, Retro, statusList, fixes = ...
 fixes = fixes or {}
 
--- data/move_fixes.lua: display names that fit the 12-character field, flat
--- powers for moves whose power Gen 1 cannot compute, secondary effects mapped
--- onto Gen 1's 82 constants, and the removal list for mechanics Gen 1 simply
--- does not have.  Applied here rather than baked into data/moves.lua so the
--- judgement calls stay in one reviewable file.
+-- data/move_fixes.lua holds display names that fit the 12-character field,
+-- flat powers for moves Gen 1 cannot compute, secondary effects mapped onto
+-- its 82 constants, and the removal list.  Applied here rather than baked into
+-- data/moves.lua so the judgement calls stay in one reviewable file.
 local Removed = {}
 for id in tostring(fixes.REMOVE or ""):gmatch("[A-Z_0-9]+") do
   Removed[id] = true
@@ -106,10 +104,10 @@ local MATCHUPS = {
   { "POISON>FAIRY", 20 },
 }
 
--- Register the types, their matchups and every new move.  Always, in both
--- modes.  `register` is used rather than `patch` because these ids do not
--- exist in the vanilla dataset; if another mod got there first, fall back to
--- patch so we extend rather than fight.
+-- Register the types, their matchups and every new move, in both modes.
+-- `register` rather than `patch` because these ids do not exist in the vanilla
+-- dataset; if another mod got there first, fall back to patch so we extend
+-- rather than fight.
 local function registerAll(mod)
   local types, matchups, moves = 0, 0, 0
 
@@ -173,8 +171,8 @@ function Moves.apply(mod, mode)
     return Retro[id]                            -- may be nil: drop it
   end
 
-  -- Dedupe matters here: a STEEL/GROUND species maps to GROUND/GROUND, and a
-  -- doubled type is not a dual type -- it should collapse to a single GROUND.
+  -- Dedupe matters here: a Steel/Ground species maps to Ground/Ground, and a
+  -- doubled type is not a dual type -- it collapses to a single Ground.
   local function resolveTypes(list)
     local out, seen = {}, {}
     for _, t in ipairs(list or {}) do
@@ -212,12 +210,11 @@ function Moves.rewrite(record, resolveMove, resolveTypes)
   -- rejects a species whose array is empty, which would silently drop it
   -- from the pool entirely.
   if #lvl1 == 0 then lvl1[1] = "TACKLE" end
-  -- ...and it must contain something that ATTACKS.  Ralts shipped knowing only
-  -- GROWL, which is unplayable: a freshly caught one cannot win a battle or
-  -- even chip a wild mon enough to catch it.  41 species were in that state.
-  -- data/overrides.lua STATUS_MOVES lists the Gen 1 moves that deal no damage;
-  -- fixed-damage and OHKO moves are deliberately absent from it, since Night
-  -- Shade and Seismic Toss are perfectly good attacks.
+  -- It also has to contain something that attacks.  41 species had only status
+  -- moves at level 1 -- Ralts knew Growl and nothing else, which cannot win a
+  -- battle or chip a wild mon enough to catch it.  STATUS_MOVES in
+  -- data/overrides.lua lists the Gen 1 moves that deal no damage; fixed-damage
+  -- and OHKO moves are deliberately absent, being perfectly good attacks.
   local canAttack = false
   for _, id in ipairs(lvl1) do
     local newMove = NewMoves[id]
@@ -230,7 +227,7 @@ function Moves.rewrite(record, resolveMove, resolveTypes)
   if not canAttack then lvl1[#lvl1 + 1] = "TACKLE" end
   out.level1Moves = lvl1
 
-  -- A removed move must also leave every learnset: learnset[].move is an
+  -- A removed move has to leave every learnset too: learnset[].move is an
   -- f.id("moves") reference, and a dangling one fails the post-merge
   -- cross-check and takes the whole mod down, not just that row.
   local learn = {}

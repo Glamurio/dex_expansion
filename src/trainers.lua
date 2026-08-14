@@ -1,22 +1,20 @@
 -- Trainer modernization.
 --
--- TWO SEPARATE JOBS, deliberately.
+-- Two jobs, kept separate.
 --
--- 1. Gym leaders and the Elite Four get HAND-AUTHORED rosters
---    (data/trainer_overrides.lua).  A leader's team is designed -- which mon
---    leads, which one is the wall, what the ace is -- and no heuristic should
---    be inventing that.
+-- Gym leaders and the Elite Four get hand-authored rosters
+-- (data/trainer_overrides.lua).  A leader's team is designed -- which mon leads,
+-- which one is the wall, what the ace is -- so a heuristic has no business
+-- inventing it.
 --
--- 2. Every other trainer gets a GENERIC pass: any species appearing more than
---    once in a party has the duplicate replaced by a same-type, similar-power
---    species.  That is the whole idea -- a Bug Catcher with two Weedle becomes
---    a Bug Catcher with a Weedle and something else Bug -- and it is a
---    mechanical enough rule to trust to code, because it only ever replaces a
---    REPEAT.  A trainer's first of each species is never touched, so Kanto's
---    identity survives and every roster still reads as the same trainer.
+-- Every other trainer gets a generic pass: a species appearing more than once
+-- has the duplicate replaced by a same-type, similar-power species.  A Bug
+-- Catcher with two Weedle becomes a Weedle and something else Bug.  Only
+-- repeats are touched, so a trainer's first of each species survives and every
+-- roster still reads as the same trainer.
 --
 -- Runs at game.ready against live Data rather than through the `trainers`
--- registry, because `parties` is f.list(f.list(...)) and arrays REPLACE
+-- registry, because `parties` is f.list(f.list(...)) and arrays replace
 -- wholesale on a record patch -- touching one species would mean restating
 -- every roster in the game.
 
@@ -30,8 +28,8 @@ local Trainers = {}
 Trainers.EXCLUDED = { SHEDINJA = true }
 
 -- Gen 1 has one Special stat where later games have two, so counting it twice
--- is the fair way to line a vanilla mon up against one of ours: same formula
--- for both, from the five stats the engine actually stores.
+-- lines a vanilla mon up fairly against one of ours -- same formula for both,
+-- from the five stats the engine stores.
 local function power(def)
   local s = def and def.baseStats
   if type(s) ~= "table" then return 0 end
@@ -39,10 +37,9 @@ local function power(def)
     + 2 * (s.special or 0)
 end
 
--- Deterministic, so a given trainer always gets the same replacement: a team
--- that reshuffles between boots would make the game feel unstable and would
--- make bug reports useless.  Pure arithmetic -- LuaJIT is Lua 5.1 syntax and
--- has no bitwise operators.
+-- Deterministic, so a trainer always gets the same replacement; a team that
+-- reshuffles between boots makes bug reports useless.  Pure arithmetic, since
+-- LuaJIT is Lua 5.1 syntax and has no bitwise operators.
 local function hash32(str)
   local h = 5381
   for i = 1, #str do
@@ -65,12 +62,10 @@ local function candidatesFor(pokemon, def, exclude)
       -- vanilla mon would not modernize anything
       local legendary = ext and ext.legendary
       if ext and not legendary then
-        -- Count shared types, but rank a NORMAL-only match LAST.
-        --
-        -- Sharing NORMAL is technically a match and thematically useless: it
-        -- let a Bird Keeper's third Pidgey become Whismur, because Pidgey is
-        -- NORMAL/FLYING and Whismur is NORMAL.  The distinguishing type is the
-        -- one that makes the trainer a Bird Keeper, so matches on it win.
+        -- Count shared types, ranking a Normal-only match last.  Sharing
+        -- Normal is a match on paper and useless in practice -- it turns a
+        -- Bird Keeper's Pidgey into a Whismur.  The distinguishing type is the
+        -- one that makes the trainer a Bird Keeper.
         local shares, specific = false, 0
         for _, t in ipairs(cand.types) do
           if wanted[t] then
@@ -91,8 +86,8 @@ local function candidatesFor(pokemon, def, exclude)
     if a.gap ~= b.gap then return a.gap < b.gap end
     return a.id < b.id -- stable regardless of pairs() order
   end)
-  -- If any candidate matched on something other than NORMAL, drop the
-  -- NORMAL-only ones entirely rather than leaving them in the random pick.
+  -- If anything matched on a non-Normal type, drop the Normal-only candidates
+  -- rather than leaving them in the random pick.
   if out[1] and out[1].spec > 0 then
     local kept = {}
     for _, c in ipairs(out) do
@@ -166,8 +161,8 @@ function Trainers.apply(mod, pokemon, trainers, overrides)
             end
             stats.overridden = stats.overridden + 1
           else
-            -- a missing species would leave an empty party and a soft-locked
-            -- battle, so keep whatever DOES resolve rather than nothing
+            -- an empty party soft-locks the battle, so keep whatever does
+            -- resolve rather than nothing
             for i, row in ipairs(wanted) do
               if pokemon[row[2]] then
                 party[i] = { level = row[1], species = row[2] }
