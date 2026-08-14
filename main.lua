@@ -25,8 +25,8 @@
 -- Verified against gen1recomp:
 --   * species are string-keyed and saves are Lua source, so there is no
 --     255-index ceiling anywhere in the gameplay path.
---   * constants.dexSize is derived, but TOO EARLY to see us -- see the dex
---     size section below, which is why the Pokedex was stuck at 151.
+--   * constants.dexSize IS derived, but too early to see us -- see the dex
+--     size section, which is why the Pokedex was stuck at 151.
 
 local mod = ...
 
@@ -60,16 +60,39 @@ end
 local Data = loadModule("data/species.lua")
 local NewMoves = loadModule("data/moves.lua")
 local Retro = loadModule("data/retro.lua")
+-- Attacking FAIRY moves.  data/moves.lua comes from BW2 learnsets, where the
+-- type did not exist, so it yields only CHARM / MOONLIGHT / SWEET_KISS -- all
+-- power 0.  Fairy resisted and was immune to Dragon but could not attack with
+-- its own type, which is a half-real type.  Merged in here so everything
+-- downstream (registration, the RETRO ancestor map, the attack guarantee)
+-- treats them like any other added move.
+do
+  local extra = loadModule("data/moves_extra.lua")
+  for id in pairs(extra) do Retro[id] = Retro[id] or "SWIFT" end
+  for id, record in pairs(extra) do NewMoves[id] = record end
+end
 -- Vanilla retypes, per-species party icons, and the Gen 1 status-move set.
 -- Hand-editable; see the header of that file.  Loaded BEFORE src/moves.lua,
 -- which takes STATUS_MOVES as a chunk argument.
 local Overrides = loadModule("data/overrides.lua")
+-- Correct typings for the 88 species whose STEEL/DARK/FAIRY slots
+-- build_species_data.py dropped.  See that file's header.
+local ModernTypes = loadModule("data/modern_types.lua")
 local GrowthRates = loadModule("src/growth_rates.lua")
+-- Move names that fit the 12-character field, flat powers for moves Gen 1
+-- cannot compute, mapped secondary effects, and the removal list.
+local MoveFixes = loadModule("data/move_fixes.lua")
 local Moves = loadModule("src/moves.lua", NewMoves, Retro,
-  Overrides.STATUS_MOVES)
+  Overrides.STATUS_MOVES, MoveFixes)
 local Encounters = loadModule("src/encounters.lua")
 local Starters = loadModule("src/starters.lua")
 local Icons = loadModule("src/icons.lua")
+local Trainers = loadModule("src/trainers.lua")
+local TrainerOverrides = loadModule("data/trainer_overrides.lua")
+-- Fairy attacking moves need someone to learn them, or the type is offensively
+-- imaginary.  Hand-authored, and applied to live Data because `learnset` is a
+-- list and a record patch would replace it wholesale.
+local FairyLearnsets = loadModule("data/fairy_learnsets.lua")
 -- Evolutions Gen 1 cannot express natively (stone remaps, and friendship /
 -- held-item / time-of-day / known-move conditions turned into plain levels).
 -- Kept out of data/species.lua so the hand-checked rows stay reviewable.
@@ -186,6 +209,10 @@ mod.options:define({
       { "SINNOH", "sinnoh" },
       { "UNOVA", "unova" },
       { "RANDOM TRIO", "random" },
+      -- TEMPORARY: Aron (Steel), Houndour (Dark), Togepi (Fairy), each with a
+      -- level-1 move of that type.  Remove this choice and TRIOS.typetest in
+      -- src/starters.lua when the types are confirmed working.
+      { "TYPE TEST (DUMMY)", "typetest" },
     } },
   { key = "starterSeed", label = "STARTER SEED", type = "text",
     default = "", maxLen = 24 },
@@ -203,6 +230,11 @@ mod.options:define({
       { "SP. DEFENSE", "spd" },
       { "AVERAGE", "average" },
     } },
+  -- Hand-authored leader/E4 rosters, and duplicate slots replaced on ordinary
+  -- trainers.  Off would leave Kanto exactly as the ROM had it, which is a
+  -- reasonable thing to want alongside an expanded dex.
+  { key = "modernTrainers", label = "MODERN TRAINERS", type = "toggle",
+    default = true },
   -- How much of a widened table's encounter roll goes to the NEW species.
   -- An even split leaves the vanilla ten at half the roll, and because Route 1
   -- fills several of its slots with the same Pidgey and Rattata, that reads as
@@ -225,6 +257,8 @@ if respect == nil then respect = true end
 -- at talk time so the setting applies without a reboot.
 local starterMode = mod.options:get("starters") or "vanilla"
 local specialMode = mod.options:get("specialMode") or "spa"
+local modernTrainers = mod.options:get("modernTrainers")
+if modernTrainers == nil then modernTrainers = true end
 local NEW_SHARE = { even = 0.50, most = 0.70, dominant = 0.85 }
 local newShare = NEW_SHARE[mod.options:get("newShare") or "most"] or 0.70
 
@@ -259,78 +293,6 @@ for key, body in pairs(DexEntries.TEXT or {}) do
 end
 report.texts = textCount
 mod.log:info("registered %d dex entry texts", textCount)
-
--- ------------------------------------------------------------- dex size
--- THE POKEDEX STAYED AT 151 BECAUSE OF LOAD ORDER, not because the constant
--- is hardcoded.  src/core/Game.lua does:
---
---     Data:load()            -- runs seedDefaults(), which derives dexSize
---     self.mods:load(Data)   -- ...and only THEN merges our 498 species
---
--- and seedDefaults only derives when the value is absent:
---
---     if constants.dexSize == nil then ... highest def.dex ... end
---
--- So the derivation ran against the vanilla 151, stamped 151, and by the time
--- our species existed the field was no longer nil.  PokedexMenu then loops
--- `for n = 1, constants.dexSize or 151`, which is where the cap was visible.
--- Seen and owned are keyed by species id rather than index, so they follow
--- once the loop covers the full range.
---
--- Patching the constant declaratively covers it, and the game.ready pass below
--- covers the case where another mod raises it higher than we would.
-
-do
-  local highest = 0
-  for _, record in ipairs(Data.SPECIES) do
-    if record.dex > highest then highest = record.dex end
-  end
-  report.dexSize = highest
-  local ok = pcall(function()
-    mod.content.constants:patch({
-      dexSize = highest,
-      dexDigits = math.max(3, #tostring(highest)),
-    })
-  end)
-  if ok then
-    mod.log:info("dexSize set to %d (%d digits)", highest,
-      math.max(3, #tostring(highest)))
-  else
-    mod.log:warn("could not set dexSize; the Pokedex will stay capped")
-  end
-end
-
--- ---------------------------------------------------------------- cries
--- data.audio.cries is keyed by SPECIES ID, and Sound.playCry accepts a
--- { file = path } definition, decoded by newFileSource -- so an .ogg per
--- species is all this needs.  No `cry` field on the record is required; the
--- lookup is by species.
---
--- Gen 3-5 cries are cleaner recordings than the Game Boy chip cries they sit
--- beside, so tools/lofi_cries.py band-limits and bit-crushes them offline
--- (see its header).  Nothing here filters at runtime: LOVE's Source:setFilter
--- needs an effects-capable device and this mod never owns the Source anyway --
--- Sound.playCry creates and caches it.
-
-do
-  local cries = 0
-  for _, record in ipairs(Data.SPECIES) do
-    local rel = ("cries/%d.ogg"):format(record.dex)
-    local path = (mod.assets and mod.assets.path)
-      and mod.assets:path(rel) or rel
-    local ok = pcall(function()
-      mod.content.cries:register(record.id, { file = path })
-    end)
-    if not ok then
-      ok = pcall(function()
-        mod.content.cries:patch(record.id, { file = path })
-      end)
-    end
-    if ok then cries = cries + 1 end
-  end
-  report.cries = cries
-  mod.log:info("registered %d cries", cries)
-end
 
 -- ------------------------------------------------------- types and moves
 -- Runs BEFORE species registration: `types` and `level1Moves` are
@@ -424,8 +386,43 @@ local function resolveSpecial(record)
   return record
 end
 
+-- TEMPORARY, for the TYPE TEST trio: give each dummy a level-1 move of its new
+-- type.  Unlike the trio itself (read at talk time) this is baked at
+-- registration, so switching to TYPE TEST needs one restart to take effect.
+local DUMMY_MOVES = {
+  ARON = "METAL_CLAW",       -- STEEL, 50 power, Scratch animation
+  HOUNDOUR = "CRUNCH",       -- DARK, 80 power, Bite animation
+  TOGEPI = "DAZZLING_GLEAM", -- FAIRY, 80 power, Swift animation
+}
+local dummyActive = (mod.options:get("starters") == "typetest")
+local function applyDummyMoves(record)
+  if not dummyActive then return record end
+  local want = DUMMY_MOVES[record.id]
+  if not want then return record end
+  for _, id in ipairs(record.level1Moves) do
+    if id == want then return record end
+  end
+  record.level1Moves[#record.level1Moves + 1] = want
+  return record
+end
+
+-- Correct the typing FIRST, so the RETRO resolver sees the real types and can
+-- fold DARK->GHOST / STEEL->GROUND / FAIRY->NORMAL (and collapse a doubled
+-- result to a single type).  Applying it after rewrite would leave RETRO
+-- looking at the wrong input.
+local function applyModernTypes(record)
+  local spec = ModernTypes[record.id]
+  if not spec then return record end
+  local types = {}
+  for t in spec:gmatch("[A-Z_]+") do types[#types + 1] = t end
+  if #types > 0 then record.types = types end
+  return record
+end
+
 for _, record in ipairs(Data.SPECIES) do
+  record = applyModernTypes(record)
   record = Moves.rewrite(record, resolveMove, resolveTypes)
+  record = applyDummyMoves(record)
   record = absolutise(record)
   record = resolveSpecial(record)
   -- merge the mapped evolutions, skipping any target the record already
@@ -467,6 +464,78 @@ end
 
 report.species, report.skipped = registered, skipped
 mod.log:info("registered %d species (%d skipped)", registered, skipped)
+
+-- ------------------------------------------------------------- dex size
+-- THE POKEDEX STAYED AT 151 BECAUSE OF LOAD ORDER, not because the constant
+-- is hardcoded.  src/core/Game.lua does:
+--
+--     Data:load()            -- runs seedDefaults(), which derives dexSize
+--     self.mods:load(Data)   -- ...and only THEN merges our 498 species
+--
+-- and seedDefaults only derives when the value is absent:
+--
+--     if constants.dexSize == nil then ... highest def.dex ... end
+--
+-- So the derivation ran against the vanilla 151, stamped 151, and by the time
+-- our species existed the field was no longer nil.  PokedexMenu then loops
+-- `for n = 1, constants.dexSize or 151`, which is where the cap was visible.
+-- Seen and owned are keyed by species id rather than index, so they follow
+-- once the loop covers the full range.
+--
+-- Patching the constant declaratively covers it, and the game.ready pass below
+-- covers the case where another mod raises it higher than we would.
+
+do
+  local highest = 0
+  for _, record in ipairs(Data.SPECIES) do
+    if record.dex > highest then highest = record.dex end
+  end
+  report.dexSize = highest
+  local ok = pcall(function()
+    mod.content.constants:patch({
+      dexSize = highest,
+      dexDigits = math.max(3, #tostring(highest)),
+    })
+  end)
+  if ok then
+    mod.log:info("dexSize set to %d (%d digits)", highest,
+      math.max(3, #tostring(highest)))
+  else
+    mod.log:warn("could not set dexSize; the Pokedex will stay capped")
+  end
+end
+
+-- ---------------------------------------------------------------- cries
+-- data.audio.cries is keyed by SPECIES ID, and Sound.playCry accepts a
+-- { file = path } definition, decoded by newFileSource -- so an .ogg per
+-- species is all this needs.  No `cry` field on the record is required; the
+-- lookup is by species.
+--
+-- Gen 3-5 cries are cleaner recordings than the Game Boy chip cries they sit
+-- beside, so tools/lofi_cries.py band-limits and bit-crushes them offline
+-- (see its header).  Nothing here filters at runtime: LOVE's Source:setFilter
+-- needs an effects-capable device and this mod never owns the Source anyway --
+-- Sound.playCry creates and caches it.
+
+do
+  local cries = 0
+  for _, record in ipairs(Data.SPECIES) do
+    local rel = ("cries/%d.ogg"):format(record.dex)
+    local path = (mod.assets and mod.assets.path)
+      and mod.assets:path(rel) or rel
+    local ok = pcall(function()
+      mod.content.cries:register(record.id, { file = path })
+    end)
+    if not ok then
+      ok = pcall(function()
+        mod.content.cries:patch(record.id, { file = path })
+      end)
+    end
+    if ok then cries = cries + 1 end
+  end
+  report.cries = cries
+  mod.log:info("registered %d cries", cries)
+end
 
 -- ------------------------------------------------------- vanilla retypes
 -- Registering STEEL / DARK / FAIRY does not retype anything by itself.
@@ -579,6 +648,7 @@ do
   report.moveMode = moveMode
   report.starterMode = starterMode
   report.specialMode = specialMode
+  report.modernTrainers = modernTrainers
   report.respect = respect
   report.moves = 0
   for _ in pairs(NewMoves) do report.moves = report.moves + 1 end
@@ -729,9 +799,9 @@ mod.events:on("game.ready", function(payload)
   mod.log:info("wild reconcile: %d slots added, %d bucket tables widened",
     addedSlots, fixed)
 
-  -- Re-derive dexSize from the MERGED dataset and only ever raise.  Another
-  -- mod may add species past ours, and seedDefaults cannot help by then.
-  -- Lowering would truncate someone else's roster, so max() not assignment.
+  -- Re-derive from the MERGED dataset and only ever raise.  Another mod may
+  -- add species past ours, and seedDefaults cannot help by then.  Lowering
+  -- would truncate someone else's roster, so max() rather than assignment.
   local constants = game.data and game.data.constants
   if type(constants) == "table" then
     local highest = 0
@@ -747,6 +817,47 @@ mod.events:on("game.ready", function(payload)
       mod.log:info("dexSize raised to %d after merge", highest)
     end
     report.dexSizeFinal = constants.dexSize
+  end
+
+  -- Fairy learnsets, into live Data so the vanilla Fairies (Clefairy and
+  -- friends, made Fairy by the retype pass) get them too.  Idempotent by move
+  -- id, so the map.entered pass and a hot reload cannot double-add.
+  do
+    local added = 0
+    for id, rows in pairs(FairyLearnsets) do
+      local def = game.data.pokemon and game.data.pokemon[id]
+      if type(def) == "table" and type(def.learnset) == "table" then
+        local have = {}
+        for _, entry in ipairs(def.learnset) do have[entry.move] = true end
+        for _, row in ipairs(rows) do
+          if not have[row[2]] then
+            def.learnset[#def.learnset + 1] = { level = row[1], move = row[2] }
+            have[row[2]] = true
+            added = added + 1
+          end
+        end
+        -- the engine walks the learnset in order, so keep it sorted by level
+        table.sort(def.learnset, function(a, b)
+          if a.level ~= b.level then return a.level < b.level end
+          return tostring(a.move) < tostring(b.move)
+        end)
+      end
+    end
+    report.fairyMoves = added
+    mod.log:info("taught %d Fairy attacking moves by level-up", added)
+  end
+
+  -- Trainers, after placement: both mutate live Data and neither depends on
+  -- the other, but doing trainers last keeps the encounter numbers in the log
+  -- next to each other.
+  if modernTrainers then
+    local ts = Trainers.apply(mod, game.data.pokemon, game.data.trainers,
+      TrainerOverrides)
+    report.trainerParties = ts.parties
+    report.trainerOverridden = ts.overridden
+    report.trainerDeduped = ts.deduped
+  else
+    mod.log:info("MODERN TRAINERS off: rosters left exactly as the ROM had them")
   end
 
   report.addedLive = addedSlots
