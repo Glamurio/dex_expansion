@@ -1,11 +1,11 @@
 -- Starter selection for Dex Expansion.
 --
 -- Replaces the three starter ball talk handlers in Oak's Lab so the trio can
--- come from any generation up to 5.  `map_scripts` is a COMPOSE registry
+-- come from any generation up to 5.  `map_scripts` is a compose registry
 -- (src/mods/Schemas.lua R.map_scripts), so this contributes only the three
 -- talk keys and the rest of Oak's Lab stays engine-owned.
 --
--- Slots keep their vanilla TYPES: left is fire, middle is water, right is
+-- Slots keep their vanilla types: left is fire, middle is water, right is
 -- grass, exactly as Charmander / Squirtle / Bulbasaur are.  Every trio in
 -- every generation has that shape, so the rival's "takes the one that beats
 -- yours" chain keeps working with no extra wiring -- rivalBall stays the
@@ -26,6 +26,11 @@ Starters.TRIOS = {
   hoenn  = { LEFT = "TORCHIC",    MIDDLE = "MUDKIP",    RIGHT = "TREECKO" },
   sinnoh = { LEFT = "CHIMCHAR",   MIDDLE = "PIPLUP",    RIGHT = "TURTWIG" },
   unova  = { LEFT = "TEPIG",      MIDDLE = "OSHAWOTT",  RIGHT = "SNIVY" },
+  -- Temporary test trio: one species of each new type, each given a level-1
+  -- move of that type by main.lua, so Steel, Dark and Fairy can be seen in a
+  -- battle without hunting for a wild one.  Delete this line and the matching
+  -- option choice to remove it.
+  typetest = { LEFT = "ARON", MIDDLE = "HOUNDOUR", RIGHT = "TOGEPI" },
 }
 
 Starters.RANDOM_POOL = {
@@ -121,9 +126,8 @@ local function askFor(slotDef, species)
   if species == Starters.TRIOS.kanto[slotDef.slot] then
     return slotDef.askText, nil
   end
-  -- A REAL newline.  Written as "\\n" in Lua source this is a backslash and
-  -- an "n", not a line break, and the renderer dropped the backslash and drew
-  -- the n -- "You want nTORCHIC?".
+  -- A real newline.  Written "\\n" in Lua source this is a backslash and an
+  -- "n" rather than a line break, and the renderer drops the backslash.
   return "So! You want\n{RAM}?", true
 end
 
@@ -182,16 +186,15 @@ end
 --     local party = flags.EVENT_CHOSE_BULBASAUR and 3
 --                   or flags.EVENT_CHOSE_SQUIRTLE and 2 or 1
 --     { "start_battle", "trainer", "OPP_RIVAL1", party }
--- and those parties are VANILLA trainer data, so the rival still opened with
--- a Kanto starter.  The party index is already right; only the species in it
--- are wrong.
+-- and those parties are vanilla trainer data, so the party index is already
+-- right and only the species in it are wrong.
 --
--- Substitution is done stage-for-stage along the evolution line, so the later
--- rival battles and the Champion fight stay consistent: Charmander/Charmeleon/
--- Charizard become the fire trio's three stages, and so on.
+-- Substitution runs stage-for-stage along the evolution line, so the later
+-- rival battles and the Champion fight stay consistent: Charmander, Charmeleon
+-- and Charizard become the fire trio's three stages, and so on.
 --
--- This runs at game.ready against live Data rather than through the trainers
--- registry, because `parties` is f.list(f.list(...)) and arrays REPLACE
+-- Done at game.ready against live Data rather than through the trainers
+-- registry, because `parties` is f.list(f.list(...)) and arrays replace
 -- wholesale on a record patch -- rewriting one species would mean restating
 -- every rival roster, levels included.
 
@@ -243,15 +246,13 @@ end
 -- rewriting those would be a different bug.
 function Starters.retargetRivals(mod, currentTrio)
   mod.events:on("game.ready", function(payload)
-    -- The payload is { game = <Game> } (ModRuntime.emit("game.ready",
-    -- { game = self }) in src/core/Game.lua), NOT the Game itself.  Reading
-    -- payload.data instead of payload.game.data is why the rival kept his
-    -- vanilla starter: this handler ran and returned immediately, silently.
+    -- The payload is { game = <Game> }, not the Game itself; reading
+    -- payload.data gives nil and the handler returns without doing anything.
     local game = payload and (payload.game or payload)
     local data = game and game.data
     local trainers = data and data.trainers
     if type(trainers) ~= "table" then return end
-    -- resolved HERE, not at boot: the option may have changed since
+    -- resolved here, not at boot: the option may have changed since
     local map = Starters.substitutions(data.pokemon, currentTrio(game))
     if not next(map) then return end
     local swapped = 0
@@ -277,7 +278,7 @@ end
 -- Install the contribution.  Returns the resolved trio for logging, or nil
 -- when the mod deliberately stays out of the way.
 function Starters.apply(mod)
-  -- The randomizer replaces the SAME three talk keys at priority 100.  A tie
+  -- The randomizer replaces the same three talk keys at priority 100.  A tie
   -- between two compose contributions on identical keys is not something to
   -- race, so yield to it: its starter randomization is the more specific
   -- feature and the player opted into it.
@@ -288,21 +289,15 @@ function Starters.apply(mod)
     return nil
   end
 
-  -- Options are read LAZILY, at the moment a ball is talked to, NOT captured
-  -- here.
+  -- Options are read at talk time, not captured here.  The entry chunk runs
+  -- once at boot, so capturing the value means a change in the options menu
+  -- does not apply until the game restarts.
   --
-  -- Capturing them here is why changing STARTERS in the options menu and then
-  -- starting a new game kept the old trio until the game was rebooted: the
-  -- entry chunk runs once at boot, so `mode` was whatever it had been then.
-  -- Reading at talk time makes the setting take effect immediately.
-  --
-  -- The handlers are also registered UNCONDITIONALLY, including when the
-  -- setting is VANILLA.  Registering only for a non-vanilla trio had the same
-  -- bug in the other direction: booting on VANILLA meant no handlers existed,
-  -- so switching to JOHTO later could not apply.  With the Kanto trio our rows
-  -- are functionally the vanilla ball script -- same species, same flags, and
-  -- askFor() even reuses the vanilla per-species ask text -- so always owning
-  -- the handlers costs nothing.
+  -- Handlers are registered unconditionally, including on VANILLA.  Registering
+  -- only for a non-vanilla trio has the same problem in reverse: booting on
+  -- vanilla leaves no handlers, so a later switch cannot apply.  With the Kanto
+  -- trio these rows are the vanilla ball script -- same species, same flags,
+  -- and askFor() reuses the vanilla ask text -- so owning them always is free.
   local function currentTrio(game)
     local mode = (mod.options and mod.options:get("starters")) or "vanilla"
     local seed = (mod.options and mod.options:get("starterSeed")) or ""
@@ -329,9 +324,9 @@ function Starters.apply(mod)
     return nil
   end
 
-  -- Same reasoning for the rival: resolve at game.ready, from the option as it
-  -- stands then, so a New Game after changing the setting gets a matching
-  -- rival without a reboot.
+  -- Same reasoning for the rival: resolved at game.ready from the option as it
+  -- stands then, so a new game after changing the setting gets a matching
+  -- rival without a restart.
   Starters.retargetRivals(mod, currentTrio)
 
   local preview = currentTrio(nil)
