@@ -23,11 +23,10 @@
 -- EXIST.
 --
 -- Verified against gen1recomp:
---   * constants.dexSize is DERIVED from the highest `dex` in the merged
---     registry (src/core/Data.lua seedDefaults), so registering 649 species
---     widens the Pokedex UI with no constant to set.
 --   * species are string-keyed and saves are Lua source, so there is no
 --     255-index ceiling anywhere in the gameplay path.
+--   * constants.dexSize is derived, but TOO EARLY to see us -- see the dex
+--     size section below, which is why the Pokedex was stuck at 151.
 
 local mod = ...
 
@@ -177,6 +176,7 @@ mod.options:define({
     choices = { { "MODERN", "modern" }, { "RETRO GEN 1", "retro" } } },
   -- Which trio sits in Oak's Lab.  Slot types are preserved (left fire,
   -- middle water, right grass) so the rival's counter-pick still works.
+  -- src/starters.lua reads this at TALK time, so it applies without a reboot.
   { key = "starters", label = "STARTERS", type = "choice",
     default = "vanilla",
     choices = {
@@ -189,6 +189,20 @@ mod.options:define({
     } },
   { key = "starterSeed", label = "STARTER SEED", type = "text",
     default = "", maxLen = 24 },
+  -- Gen 1 has ONE Special stat; every species from Gen 2 on has two.  Which
+  -- one the single stat becomes is a real balance decision, not a detail:
+  -- SpA makes special attackers hit as hard as they should and leaves them
+  -- frail, SpD does the reverse, and the average flattens both.  Sanqui's
+  -- randomizer exposes the same choice.  SpA is the default because Gen 1's
+  -- own Special is the attacking number in practice -- it is what Alakazam
+  -- and Mewtwo are famous for.
+  { key = "specialMode", label = "SPECIAL STAT", type = "choice",
+    default = "spa",
+    choices = {
+      { "SP. ATTACK", "spa" },
+      { "SP. DEFENSE", "spd" },
+      { "AVERAGE", "average" },
+    } },
   -- How much of a widened table's encounter roll goes to the NEW species.
   -- An even split leaves the vanilla ten at half the roll, and because Route 1
   -- fills several of its slots with the same Pidgey and Rattata, that reads as
@@ -207,8 +221,10 @@ local available = mod.options:get("available") or "all"
 local subsetSeed = mod.options:get("subsetSeed") or ""
 local respect = mod.options:get("respectOtherMods")
 if respect == nil then respect = true end
+-- Read only for the diagnostics report; src/starters.lua reads the live value
+-- at talk time so the setting applies without a reboot.
 local starterMode = mod.options:get("starters") or "vanilla"
-local starterSeed = mod.options:get("starterSeed") or ""
+local specialMode = mod.options:get("specialMode") or "spa"
 local NEW_SHARE = { even = 0.50, most = 0.70, dominant = 0.85 }
 local newShare = NEW_SHARE[mod.options:get("newShare") or "most"] or 0.70
 
@@ -243,6 +259,78 @@ for key, body in pairs(DexEntries.TEXT or {}) do
 end
 report.texts = textCount
 mod.log:info("registered %d dex entry texts", textCount)
+
+-- ------------------------------------------------------------- dex size
+-- THE POKEDEX STAYED AT 151 BECAUSE OF LOAD ORDER, not because the constant
+-- is hardcoded.  src/core/Game.lua does:
+--
+--     Data:load()            -- runs seedDefaults(), which derives dexSize
+--     self.mods:load(Data)   -- ...and only THEN merges our 498 species
+--
+-- and seedDefaults only derives when the value is absent:
+--
+--     if constants.dexSize == nil then ... highest def.dex ... end
+--
+-- So the derivation ran against the vanilla 151, stamped 151, and by the time
+-- our species existed the field was no longer nil.  PokedexMenu then loops
+-- `for n = 1, constants.dexSize or 151`, which is where the cap was visible.
+-- Seen and owned are keyed by species id rather than index, so they follow
+-- once the loop covers the full range.
+--
+-- Patching the constant declaratively covers it, and the game.ready pass below
+-- covers the case where another mod raises it higher than we would.
+
+do
+  local highest = 0
+  for _, record in ipairs(Data.SPECIES) do
+    if record.dex > highest then highest = record.dex end
+  end
+  report.dexSize = highest
+  local ok = pcall(function()
+    mod.content.constants:patch({
+      dexSize = highest,
+      dexDigits = math.max(3, #tostring(highest)),
+    })
+  end)
+  if ok then
+    mod.log:info("dexSize set to %d (%d digits)", highest,
+      math.max(3, #tostring(highest)))
+  else
+    mod.log:warn("could not set dexSize; the Pokedex will stay capped")
+  end
+end
+
+-- ---------------------------------------------------------------- cries
+-- data.audio.cries is keyed by SPECIES ID, and Sound.playCry accepts a
+-- { file = path } definition, decoded by newFileSource -- so an .ogg per
+-- species is all this needs.  No `cry` field on the record is required; the
+-- lookup is by species.
+--
+-- Gen 3-5 cries are cleaner recordings than the Game Boy chip cries they sit
+-- beside, so tools/lofi_cries.py band-limits and bit-crushes them offline
+-- (see its header).  Nothing here filters at runtime: LOVE's Source:setFilter
+-- needs an effects-capable device and this mod never owns the Source anyway --
+-- Sound.playCry creates and caches it.
+
+do
+  local cries = 0
+  for _, record in ipairs(Data.SPECIES) do
+    local rel = ("cries/%d.ogg"):format(record.dex)
+    local path = (mod.assets and mod.assets.path)
+      and mod.assets:path(rel) or rel
+    local ok = pcall(function()
+      mod.content.cries:register(record.id, { file = path })
+    end)
+    if not ok then
+      ok = pcall(function()
+        mod.content.cries:patch(record.id, { file = path })
+      end)
+    end
+    if ok then cries = cries + 1 end
+  end
+  report.cries = cries
+  mod.log:info("registered %d cries", cries)
+end
 
 -- ------------------------------------------------------- types and moves
 -- Runs BEFORE species registration: `types` and `level1Moves` are
@@ -313,9 +401,33 @@ local function absolutise(record)
   return record
 end
 
+-- Resolve the single Special stat.  data/species.lua carries Sp. Attack in
+-- baseStats.special and Sp. Defense in dexExpansion.specialDefense.
+--
+-- baseStats MUST be copied: Moves.rewrite returns a shallow copy, so the
+-- baseStats table is still shared with the loaded dataset, and writing into it
+-- would make the choice sticky across a mode switch within one boot.
+local function resolveSpecial(record)
+  local ext = record.dexExpansion or {}
+  local spd = ext.specialDefense
+  if type(spd) ~= "number" or specialMode == "spa" then return record end
+  local base = {}
+  for k, v in pairs(record.baseStats) do base[k] = v end
+  if specialMode == "spd" then
+    base.special = spd
+  else -- average
+    base.special = math.floor((base.special + spd) / 2 + 0.5)
+  end
+  if base.special < 1 then base.special = 1 end
+  if base.special > 255 then base.special = 255 end
+  record.baseStats = base
+  return record
+end
+
 for _, record in ipairs(Data.SPECIES) do
   record = Moves.rewrite(record, resolveMove, resolveTypes)
   record = absolutise(record)
+  record = resolveSpecial(record)
   -- merge the mapped evolutions, skipping any target the record already
   -- reaches so a rebuild of species.lua cannot produce duplicates
   local extra = EvolutionsExtra[record.id]
@@ -401,8 +513,11 @@ end
 -- --------------------------------------------------------------- starters
 -- After species registration on purpose: a non-Kanto trio names species this
 -- mod itself registers, so they have to be in the registry first.
+--
+-- No option is passed in: src/starters.lua reads STARTERS at talk time, which
+-- is what makes changing it apply without a reboot.
 
-Starters.apply(mod, starterMode, starterSeed)
+Starters.apply(mod)
 
 -- ------------------------------------------------- randomizer metadata
 -- exports.registerSpeciesMeta(id, { legendary = bool, stage = "basic" |
@@ -463,6 +578,7 @@ do
   report.available = available
   report.moveMode = moveMode
   report.starterMode = starterMode
+  report.specialMode = specialMode
   report.respect = respect
   report.moves = 0
   for _ in pairs(NewMoves) do report.moves = report.moves + 1 end
@@ -612,6 +728,26 @@ mod.events:on("game.ready", function(payload)
   -- through -- Logger uses print, so this only appears on stdout.
   mod.log:info("wild reconcile: %d slots added, %d bucket tables widened",
     addedSlots, fixed)
+
+  -- Re-derive dexSize from the MERGED dataset and only ever raise.  Another
+  -- mod may add species past ours, and seedDefaults cannot help by then.
+  -- Lowering would truncate someone else's roster, so max() not assignment.
+  local constants = game.data and game.data.constants
+  if type(constants) == "table" then
+    local highest = 0
+    for _, def in pairs(game.data.pokemon or {}) do
+      if type(def) == "table" and type(def.dex) == "number"
+          and def.dex > highest then
+        highest = def.dex
+      end
+    end
+    if highest > (constants.dexSize or 0) then
+      constants.dexSize = highest
+      constants.dexDigits = math.max(3, #tostring(highest))
+      mod.log:info("dexSize raised to %d after merge", highest)
+    end
+    report.dexSizeFinal = constants.dexSize
+  end
 
   report.addedLive = addedSlots
   report.yielded = 0
