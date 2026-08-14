@@ -241,7 +241,7 @@ end
 -- Rewrite rival rosters in place.  Restricted to classes whose id names the
 -- rival: other trainers may legitimately carry a starter line, and silently
 -- rewriting those would be a different bug.
-function Starters.retargetRivals(mod, chosen)
+function Starters.retargetRivals(mod, currentTrio)
   mod.events:on("game.ready", function(payload)
     -- The payload is { game = <Game> } (ModRuntime.emit("game.ready",
     -- { game = self }) in src/core/Game.lua), NOT the Game itself.  Reading
@@ -251,7 +251,8 @@ function Starters.retargetRivals(mod, chosen)
     local data = game and game.data
     local trainers = data and data.trainers
     if type(trainers) ~= "table" then return end
-    local map = Starters.substitutions(data.pokemon, chosen)
+    -- resolved HERE, not at boot: the option may have changed since
+    local map = Starters.substitutions(data.pokemon, currentTrio(game))
     if not next(map) then return end
     local swapped = 0
     for id, def in pairs(trainers) do
@@ -275,9 +276,7 @@ end
 
 -- Install the contribution.  Returns the resolved trio for logging, or nil
 -- when the mod deliberately stays out of the way.
-function Starters.apply(mod, mode, seed)
-  if mode == nil or mode == "vanilla" then return nil end
-
+function Starters.apply(mod)
   -- The randomizer replaces the SAME three talk keys at priority 100.  A tie
   -- between two compose contributions on identical keys is not something to
   -- race, so yield to it: its starter randomization is the more specific
@@ -289,19 +288,34 @@ function Starters.apply(mod, mode, seed)
     return nil
   end
 
-  local cache
-  local function resolveChosen(game)
-    if cache then return cache end
+  -- Options are read LAZILY, at the moment a ball is talked to, NOT captured
+  -- here.
+  --
+  -- Capturing them here is why changing STARTERS in the options menu and then
+  -- starting a new game kept the old trio until the game was rebooted: the
+  -- entry chunk runs once at boot, so `mode` was whatever it had been then.
+  -- Reading at talk time makes the setting take effect immediately.
+  --
+  -- The handlers are also registered UNCONDITIONALLY, including when the
+  -- setting is VANILLA.  Registering only for a non-vanilla trio had the same
+  -- bug in the other direction: booting on VANILLA meant no handlers existed,
+  -- so switching to JOHTO later could not apply.  With the Kanto trio our rows
+  -- are functionally the vanilla ball script -- same species, same flags, and
+  -- askFor() even reuses the vanilla per-species ask text -- so always owning
+  -- the handlers costs nothing.
+  local function currentTrio(game)
+    local mode = (mod.options and mod.options:get("starters")) or "vanilla"
+    local seed = (mod.options and mod.options:get("starterSeed")) or ""
+    if mode == "vanilla" then mode = "kanto" end
     local data = type(game) == "table" and type(game.data) == "table"
       and game.data.pokemon or nil
-    cache = Starters.resolve(mode, seed, data)
-    return cache
+    return Starters.resolve(mode, seed, data)
   end
 
   local talk = {}
   for _, slot in ipairs({ "LEFT", "MIDDLE", "RIGHT" }) do
     local slotDef = SLOTS[slot]
-    talk[slotDef.talkKey] = handler(slotDef, resolveChosen)
+    talk[slotDef.talkKey] = handler(slotDef, currentTrio)
   end
 
   local ok, err = pcall(function()
@@ -315,10 +329,13 @@ function Starters.apply(mod, mode, seed)
     return nil
   end
 
-  local preview = Starters.resolve(mode, seed, nil)
-  -- the rival's roster has to follow the trio, not just the ball he walks to
-  Starters.retargetRivals(mod, preview)
-  mod.log:info("starters: %s / %s / %s",
+  -- Same reasoning for the rival: resolve at game.ready, from the option as it
+  -- stands then, so a New Game after changing the setting gets a matching
+  -- rival without a reboot.
+  Starters.retargetRivals(mod, currentTrio)
+
+  local preview = currentTrio(nil)
+  mod.log:info("starters (at boot): %s / %s / %s",
     preview.LEFT, preview.MIDDLE, preview.RIGHT)
   return preview
 end
