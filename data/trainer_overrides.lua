@@ -64,7 +64,7 @@ return {
     { { 25, "ONIX" }, { 24, "RHYHORN" }, { 29, "KROKOROK" } },
     { { 37, "NIDORINO" }, { 35, "KROKOROK" }, { 37, "RHYHORN" },
       { 41, "NIDOQUEEN" } },
-    { { 42, "DUGTRIO" }, { 44, "NIDOQUEEN" }, { 45, "KROKOROK" },
+    { { 42, "DUGTRIO" }, { 44, "NIDOQUEEN" }, { 45, "KROOKODILE" },
       { 45, "HIPPOWDON" }, { 45, "NIDOKING" }, { 50, "RHYDON" } },
   },
   -- 54 DEWGONG, 53 CLOYSTER, 54 SLOWBRO, 56 JYNX, 56 LAPRAS
