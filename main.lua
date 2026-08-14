@@ -389,6 +389,10 @@ end
 -- TEMPORARY, for the TYPE TEST trio: give each dummy a level-1 move of its new
 -- type.  Unlike the trio itself (read at talk time) this is baked at
 -- registration, so switching to TYPE TEST needs one restart to take effect.
+--
+-- Note this applies to the SPECIES record, so a trainer's Aron gets Metal Claw
+-- too -- trainer parties draw their moves from the same learnset the player's
+-- do.
 local DUMMY_MOVES = {
   ARON = "METAL_CLAW",       -- STEEL, 50 power, Scratch animation
   HOUNDOUR = "CRUNCH",       -- DARK, 80 power, Bite animation
@@ -481,9 +485,6 @@ mod.log:info("registered %d species (%d skipped)", registered, skipped)
 -- `for n = 1, constants.dexSize or 151`, which is where the cap was visible.
 -- Seen and owned are keyed by species id rather than index, so they follow
 -- once the loop covers the full range.
---
--- Patching the constant declaratively covers it, and the game.ready pass below
--- covers the case where another mod raises it higher than we would.
 
 do
   local highest = 0
@@ -491,17 +492,30 @@ do
     if record.dex > highest then highest = record.dex end
   end
   report.dexSize = highest
-  local ok = pcall(function()
-    mod.content.constants:patch({
-      dexSize = highest,
-      dexDigits = math.max(3, #tostring(highest)),
-    })
-  end)
-  if ok then
+  -- R.constants is a KEYED registry (Schemas.lua: `keys = { dexSize = ...,
+  -- dexDigits = ... }`), so each key is written on its own.  The first attempt
+  -- passed a whole table as the ID -- `constants:patch({ dexSize = ... })` --
+  -- which the pcall swallowed, and the Pokedex stayed at 151 with nothing in
+  -- the log to say why.
+  local wrote = 0
+  for key, value in pairs({
+    dexSize = highest,
+    dexDigits = math.max(3, #tostring(highest)),
+  }) do
+    local ok = pcall(function()
+      mod.content.constants:register(key, value)
+    end)
+    if not ok then
+      ok = pcall(function() mod.content.constants:patch(key, value) end)
+    end
+    if ok then wrote = wrote + 1 end
+  end
+  if wrote == 2 then
     mod.log:info("dexSize set to %d (%d digits)", highest,
       math.max(3, #tostring(highest)))
   else
-    mod.log:warn("could not set dexSize; the Pokedex will stay capped")
+    mod.log:warn("could not set dexSize (%d/2 keys written); the game.ready "
+      .. "pass is the fallback", wrote)
   end
 end
 
@@ -817,6 +831,38 @@ mod.events:on("game.ready", function(payload)
       mod.log:info("dexSize raised to %d after merge", highest)
     end
     report.dexSizeFinal = constants.dexSize
+  end
+
+  -- Move animations.
+  --
+  -- AnimPlayer:start looks the animation up by MOVE ID -- `self.data.moveAnims
+  -- [moveId]` -- NOT by the `anim` field on the move record.  So a new move
+  -- with anim = "SCRATCH" got no animation at all: AnimPlayer warned once and
+  -- returned, which is why Metal Claw made a sound and shook the screen but
+  -- drew nothing.
+  --
+  -- Aliasing the table entry by reference is enough: the animation is data, and
+  -- pointing two move ids at the same script is exactly what "reuses Scratch's
+  -- animation" was always supposed to mean.
+  do
+    local anims = game.data and game.data.moveAnims
+    local aliased, missing = 0, 0
+    if type(anims) == "table" then
+      for id, def in pairs(game.data.moves or {}) do
+        if anims[id] == nil and type(def.anim) == "string" then
+          local source = anims[def.anim]
+          if source then
+            anims[id] = source
+            aliased = aliased + 1
+          else
+            missing = missing + 1
+          end
+        end
+      end
+    end
+    report.animAliased = aliased
+    mod.log:info("aliased %d move animations (%d had no source)",
+      aliased, missing)
   end
 
   -- Fairy learnsets, into live Data so the vanilla Fairies (Clefairy and
