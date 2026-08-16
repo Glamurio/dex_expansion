@@ -86,8 +86,8 @@ local Starters = loadModule("src/starters.lua")
 local Icons = loadModule("src/icons.lua")
 local Trainers = loadModule("src/trainers.lua")
 local TrainerOverrides = loadModule("data/trainer_overrides.lua")
--- Level-up entries for the Fairy attacks.  Applied to live Data because
--- `learnset` is a list and a record patch replaces lists wholesale.
+-- Level-up entries for the Fairy attacks.  Also applied to live Data at
+-- game.ready, which is what reaches the vanilla Fairies we do not own.
 local FairyLearnsets = loadModule("data/fairy_learnsets.lua")
 -- Evolutions Gen 1 cannot express natively (stone remaps, and friendship /
 -- held-item / time-of-day / known-move conditions turned into plain levels).
@@ -100,21 +100,38 @@ local Diagnostics = loadModule("src/diagnostics.lua")
 -- actually collides and why.
 local Kep = loadModule("src/kep_compat.lua")
 
+-- The Gen 2-5 level-up entries data/species.lua is missing; see that file for
+-- why every added move was unreachable without it.  Optional in the same way
+-- dex_entries is: without it the mod plays fine, the added moves are just not
+-- taught by level-up, so a missing file must not stop the mod loading.
+local LearnsetsExtra = {}
+do
+  local source = mod:read("data/learnsets_extra.lua")
+  local chunk = source and compile(source, "@data/learnsets_extra.lua")
+  local ok, loaded = false, nil
+  if chunk then ok, loaded = pcall(chunk) end
+  if ok and type(loaded) == "table" then
+    LearnsetsExtra = loaded
+  else
+    mod.log:warn("data/learnsets_extra.lua not found; the added moves will be "
+      .. "registered but not taught by level-up")
+  end
+end
+
 -- Collected as the entry chunk runs, then dumped at game.ready.
 local report = {}
 
 -- KEP renumbers the whole dex, hand-authors every encounter table, and
 -- registers 20 species we also register.  Detected at entry time because the
--- species and cry responses have to happen before we write anything.
+-- species, cry and type-chart responses all have to happen before we write.
 local kepPresent = Kep.detect(mod)
 local kepShared = kepPresent and Kep.sharedSet() or {}
 if kepPresent then
-  mod.log:info("KEP detected: yielding 20 shared species, appending onto its "
-    .. "encounter tables, and renumbering our dex above its own")
+  mod.log:info("KEP detected: yielding 20 shared species and the type chart, "
+    .. "appending onto its encounter tables, renumbering our dex above its own")
 end
 
--- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
--- locally rather than committed (tools/build_dex_entries.py).  Without it the
+-- Optional: data/dex_entries.lua is 117 KB of flavour text.  Without it the
 -- Pokedex falls back to "Data unknown." for the new species, so a missing file
 -- must not stop the mod loading.
 local DexEntries = { ENTRIES = {}, TEXT = {} }
@@ -132,15 +149,13 @@ do
   else
     report.dexEntriesFile = false
     mod.log:warn("data/dex_entries.lua not found; new species will show "
-      .. "\"Data unknown.\" in the Pokedex.  Generate it with "
-      .. "python3 tools/build_dex_entries.py")
+      .. "\"Data unknown.\" in the Pokedex")
   end
 end
 
 -- Wild placement lives in its own generated file, attached onto the same
 -- Data table src/encounters.lua reads.  Rows are appended to the vanilla ten,
--- never substituted for them, so Kanto's own roster survives underneath
--- (tools/build_placement.lua).
+-- never substituted for them, so Kanto's own roster survives underneath.
 -- Rows are stored compactly as { level, "SPECIES" }; normalise them to the
 -- shape src/encounters.lua and the engine expect.
 Data.PLACEMENT = loadModule("data/placement.lua")
@@ -300,9 +315,12 @@ mod.log:info("registered %d dex entry texts", textCount)
 -- Runs before species registration: `types` and `level1Moves` are f.id()
 -- cross-references, so the targets must be registered first or the post-merge
 -- check fails the whole mod.
+--
+-- KEP registers the three types and its own matchups, and validates that
+-- nothing disagrees, so we stay off the type chart entirely when it is here.
 
 local moveMode = mod.options:get("moveMode") or "modern"
-local resolveMove, resolveTypes = Moves.apply(mod, moveMode)
+local resolveMove, resolveTypes = Moves.apply(mod, moveMode, kepPresent)
 
 -- --------------------------------------------------------------- species
 -- Field names below are the extractor's own, taken from
@@ -387,26 +405,76 @@ local function resolveSpecial(record)
   return record
 end
 
--- Temporary, for the TYPE TEST trio: a level-1 move of each new type.  Unlike
--- the trio itself, which is read at talk time, this is baked at registration,
--- so switching to TYPE TEST takes one restart.
+-- Merge the missing Gen 2-5 level-up entries into a record.
 --
--- It applies to the species record, so a trainer's Aron gets Metal Claw too --
--- trainer parties draw moves from the same learnset the player's do.
-local DUMMY_MOVES = {
-  ARON = "METAL_CLAW",       -- Steel, 50 power, Scratch animation
-  HOUNDOUR = "CRUNCH",       -- Dark, 80 power, Bite animation
-  TOGEPI = "DAZZLING_GLEAM", -- Fairy, 80 power, Swift animation
-}
-local dummyActive = (mod.options:get("starters") == "typetest")
-local function applyDummyMoves(record)
-  if not dummyActive then return record end
-  local want = DUMMY_MOVES[record.id]
-  if not want then return record end
-  for _, id in ipairs(record.level1Moves) do
-    if id == want then return record end
+-- Runs BEFORE Moves.rewrite, so retro mode still resolves each move to its Gen
+-- 1 ancestor or drops it, and the attack guarantee still sees the final list.
+-- Idempotent by (level, move), so a rebuild of species.lua that starts
+-- including these cannot double them up.
+local function mergeLearnset(record)
+  local spec = LearnsetsExtra[record.id]
+  local have = {}
+  for _, e in ipairs(record.learnset) do
+    have[tostring(e.level) .. ":" .. tostring(e.move)] = true
   end
-  record.level1Moves[#record.level1Moves + 1] = want
+  for level, move in tostring(spec or ""):gmatch("(%d+):([A-Z0-9_]+)") do
+    local key = level .. ":" .. move
+    if not have[key] then
+      record.learnset[#record.learnset + 1] =
+        { level = tonumber(level), move = move }
+      have[key] = true
+    end
+  end
+  -- The hand-written Fairy entries belong on the record too, not only in the
+  -- game.ready pass: that pass exists for the vanilla Fairies (Clefairy and
+  -- friends) which we do not own, but ours should carry them from the start so
+  -- retro mode resolves them like any other move.
+  for _, row in ipairs(FairyLearnsets[record.id] or {}) do
+    local key = tostring(row[1]) .. ":" .. row[2]
+    if not have[key] then
+      record.learnset[#record.learnset + 1] = { level = row[1], move = row[2] }
+      have[key] = true
+    end
+  end
+  table.sort(record.learnset, function(a, b)
+    if a.level ~= b.level then return a.level < b.level end
+    return tostring(a.move) < tostring(b.move)
+  end)
+  return record
+end
+
+-- PokeAPI calls the medium-fast curve "medium", and the generator carried that
+-- name straight through.  The engine only knows FAST / MEDIUM_FAST /
+-- MEDIUM_SLOW / SLOW plus the two we register, so 171 species pointed at a
+-- growth rate that does not exist.
+local GROWTH_ALIASES = {
+  MEDIUM = "MEDIUM_FAST",
+  MEDIUM_FAST = "MEDIUM_FAST",
+}
+local function fixGrowthRate(record)
+  local alias = GROWTH_ALIASES[record.growthRate]
+  if alias then record.growthRate = alias end
+  return record
+end
+
+-- Drop evolutions pointing at a species nothing registers.
+--
+-- `evolutions[].species` is an f.id("pokemon") reference, and a dangling one
+-- fails the post-merge cross-check.  Three slipped through the generator's own
+-- filter, all Gen 8/9: Corsola to Cursola, Linoone to Obstagoon, Wooper to
+-- Clodsire.  Checking against the registry rather than a hardcoded list also
+-- covers whatever a future rebuild adds.
+local function pruneEvolutions(record, known)
+  local kept = {}
+  for _, evo in ipairs(record.evolutions) do
+    if known[evo.species] then
+      kept[#kept + 1] = evo
+    else
+      mod.log:debug("dropped %s -> %s: target not registered",
+        record.id, tostring(evo.species))
+    end
+  end
+  record.evolutions = kept
   return record
 end
 
@@ -422,12 +490,30 @@ local function applyModernTypes(record)
   return record
 end
 
+-- Every id that will exist after the merge: ours, plus whatever the engine and
+-- any earlier-loading mod already put in the registry.  Registry:get folds the
+-- ops recorded so far, so the vanilla 151 are visible here.
+local knownSpecies = {}
+for _, record in ipairs(Data.SPECIES) do knownSpecies[record.id] = true end
+for _, record in ipairs(Data.SPECIES) do
+  for _, evo in ipairs(record.evolutions) do
+    if knownSpecies[evo.species] == nil then
+      local ok, found = pcall(function()
+        return mod.content.pokemon:get(evo.species)
+      end)
+      knownSpecies[evo.species] = (ok and found ~= nil) or false
+    end
+  end
+end
+
 for _, record in ipairs(Data.SPECIES) do
   record = applyModernTypes(record)
+  record = mergeLearnset(record)
   record = Moves.rewrite(record, resolveMove, resolveTypes)
-  record = applyDummyMoves(record)
   record = absolutise(record)
   record = resolveSpecial(record)
+  record = fixGrowthRate(record)
+  record = pruneEvolutions(record, knownSpecies)
   -- merge the mapped evolutions, skipping any target the record already
   -- reaches so a rebuild of species.lua cannot produce duplicates
   local extra = EvolutionsExtra[record.id]
@@ -888,8 +974,8 @@ mod.events:on("game.ready", function(payload)
   end
 
   -- Fairy learnsets, into live Data so the vanilla Fairies (Clefairy and
-  -- friends, made Fairy by the retype pass) get them too.  Idempotent by move
-  -- id, so the map.entered pass and a hot reload cannot double-add.
+  -- friends, made Fairy by the retype pass) get them too.  Ours already carry
+  -- them from registration; this is idempotent by move id either way.
   do
     local added = 0
     for id, rows in pairs(FairyLearnsets) do
