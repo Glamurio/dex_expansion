@@ -217,10 +217,6 @@ mod.options:define({
       { "SINNOH", "sinnoh" },
       { "UNOVA", "unova" },
       { "RANDOM TRIO", "random" },
-      -- Temporary: Aron (Steel), Houndour (Dark), Togepi (Fairy), each with a
-      -- level-1 move of that type.  Remove this choice and TRIOS.typetest in
-      -- src/starters.lua when the types are confirmed working.
-      { "TYPE TEST (DUMMY)", "typetest" },
     } },
   { key = "starterSeed", label = "STARTER SEED", type = "text",
     default = "", maxLen = 24 },

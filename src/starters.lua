@@ -26,11 +26,6 @@ Starters.TRIOS = {
   hoenn  = { LEFT = "TORCHIC",    MIDDLE = "MUDKIP",    RIGHT = "TREECKO" },
   sinnoh = { LEFT = "CHIMCHAR",   MIDDLE = "PIPLUP",    RIGHT = "TURTWIG" },
   unova  = { LEFT = "TEPIG",      MIDDLE = "OSHAWOTT",  RIGHT = "SNIVY" },
-  -- Temporary test trio: one species of each new type, each given a level-1
-  -- move of that type by main.lua, so Steel, Dark and Fairy can be seen in a
-  -- battle without hunting for a wild one.  Delete this line and the matching
-  -- option choice to remove it.
-  typetest = { LEFT = "ARON", MIDDLE = "HOUNDOUR", RIGHT = "TOGEPI" },
 }
 
 Starters.RANDOM_POOL = {
