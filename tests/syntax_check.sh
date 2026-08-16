@@ -17,5 +17,18 @@ for f in main.lua mod.card src/*.lua data/*.lua tests/*.lua; do
     fail=1
   fi
 done
+# mod.log exposes info, warn and error only (src/mods/Loader.lua).  A call to
+# any other level is a runtime crash the moment that line is reached, which is
+# how mod.log:debug shipped: it sat on a path that only ran with a dangling
+# evolution present.
+bad=$(grep -rn "log:[a-z]*(" --include="*.lua" . \
+  | grep -vE "log:(info|warn|error)\(" || true)
+if [ -n "$bad" ]; then
+  echo "FAIL: mod.log has no such level:"
+  echo "$bad"
+  exit 1
+fi
+echo "log levels: only info/warn/error used"
+
 [ "$fail" = 0 ] && echo "LuaJIT syntax: PASS" || echo "LuaJIT syntax: FAIL"
 exit $fail

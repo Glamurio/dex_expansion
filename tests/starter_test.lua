@@ -106,24 +106,68 @@ local yielded = true
 local fakeMod = {
   find = function() return { exports = {} } end,
   log = { info = function() end, warn = function() end },
+  options = { get = function(_, k)
+    if k == "starters" then return "johto" end
+    return ""
+  end },
+  events = { on = function() end },
   content = { map_scripts = { register = function()
     yielded = false
   end } },
 }
-Starters.apply(fakeMod, "johto", "")
+Starters.apply(fakeMod)
 check(yielded, "apply() registered OAKS_LAB despite the randomizer being present")
 print("yields to pokemon_randomizer")
 
--- 8. apply() does nothing on vanilla
-local touched = false
-local vanillaMod = {
+-- 8. The option is read at TALK time, not captured at boot.
+--
+-- Changing STARTERS in the options menu and starting a new game used to keep
+-- the old trio until the game was rebooted, because apply() captured the value
+-- once in the entry chunk.  This asserts the handler sees the CURRENT value,
+-- and that the handlers exist even when the setting is VANILLA at boot -- the
+-- other half of the same bug, where booting on vanilla registered nothing so a
+-- later switch could not apply.
+local setting = "vanilla"
+local registeredTalk = nil
+local liveMod = {
   find = function() return nil end,
   log = { info = function() end, warn = function() end },
-  content = { map_scripts = { register = function() touched = true end } },
+  options = { get = function(_, k)
+    if k == "starters" then return setting end
+    return ""
+  end },
+  events = { on = function() end },
+  content = { map_scripts = { register = function(_, _, value)
+    registeredTalk = value.talk
+  end } },
 }
-Starters.apply(vanillaMod, "vanilla", "")
-check(not touched, "vanilla mode still replaced the ball handlers")
-print("vanilla mode leaves Oak's Lab untouched")
+Starters.apply(liveMod)
+check(registeredTalk ~= nil,
+  "no handlers registered while the setting was VANILLA")
+local seen = 0
+for _ in pairs(registeredTalk or {}) do seen = seen + 1 end
+check(seen == 3, "expected 3 ball handlers, got " .. seen)
+
+-- drive one handler and read back which species it would give
+local function speciesFromHandler(slotKey)
+  local got
+  local runner = { run = function(_, rows) 
+    for _, row in ipairs(rows) do
+      if row[1] == "give_pokemon" then got = row[2] end
+    end
+  end }
+  registeredTalk[slotKey](nil, { runner = runner }, nil, nil)
+  return got
+end
+local before = speciesFromHandler("TEXT_OAKSLAB_CHARMANDER_POKE_BALL")
+check(before == "CHARMANDER",
+  "vanilla setting gave " .. tostring(before) .. ", expected CHARMANDER")
+setting = "hoenn"   -- as if the player just changed it in the options menu
+local after = speciesFromHandler("TEXT_OAKSLAB_CHARMANDER_POKE_BALL")
+check(after == "TORCHIC",
+  "after switching to HOENN the ball still gave " .. tostring(after))
+print("option read at talk time: " .. tostring(before) .. " -> "
+  .. tostring(after) .. " with no reload")
 
 print(fail == 0 and "\nSTARTERS: PASS" or "\nSTARTERS: FAIL")
 os.exit(fail == 0 and 0 or 1)
