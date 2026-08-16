@@ -21,6 +21,10 @@
 -- So the "151 subset" option restricts where species appear -- encounters, and
 -- trainer parties -- never whether they exist.
 --
+-- The one exception is the twenty species KEP also provides; see
+-- src/kep_compat.lua for why standing down there preserves the rule rather
+-- than breaking it.
+--
 -- Species are string-keyed and saves are Lua source, so there is no 255-index
 -- ceiling anywhere in the gameplay path.  dexSize is a different story -- see
 -- the dex size section.
@@ -92,9 +96,22 @@ local EvolutionsExtra = loadModule("data/evolutions_extra.lua")
 -- Writes a report file.  Logger only prints to stdout, and a fused
 -- gen1recomp.exe has no console attached.
 local Diagnostics = loadModule("src/diagnostics.lua")
+-- Compatibility with the KEP total conversion; that file documents what
+-- actually collides and why.
+local Kep = loadModule("src/kep_compat.lua")
 
 -- Collected as the entry chunk runs, then dumped at game.ready.
 local report = {}
+
+-- KEP renumbers the whole dex, hand-authors every encounter table, and
+-- registers 20 species we also register.  Detected at entry time because the
+-- species and cry responses have to happen before we write anything.
+local kepPresent = Kep.detect(mod)
+local kepShared = kepPresent and Kep.sharedSet() or {}
+if kepPresent then
+  mod.log:info("KEP detected: yielding 20 shared species, appending onto its "
+    .. "encounter tables, and renumbering our dex above its own")
+end
 
 -- Optional: data/dex_entries.lua is 117 KB of flavour text and is generated
 -- locally rather than committed (tools/build_dex_entries.py).  Without it the
@@ -434,7 +451,12 @@ for _, record in ipairs(Data.SPECIES) do
   record.dexEntry = record.dexEntry
     or (DexEntries.ENTRIES and DexEntries.ENTRIES[record.id])
   local bad = validate(record)
-  if bad then
+  if kepShared[record.id] then
+    -- KEP registers this one itself, and `pokemon` is a record registry whose
+    -- register() errors on a duplicate.  Since KEP loads after us, going first
+    -- here would make ITS call throw and take that whole mod down.
+    skipped = skipped + 1
+  elseif bad then
     skipped = skipped + 1
     mod.log:warn("species %s skipped: invalid %s",
       tostring(record.id), bad)
@@ -469,8 +491,15 @@ mod.log:info("registered %d species (%d skipped)", registered, skipped)
 -- `for n = 1, constants.dexSize or 151`.  Seen and owned are keyed by species
 -- id rather than index, so they follow once the loop covers the range.
 --
--- The registry write below covers it; the game.ready pass covers another mod
--- raising it higher than we would.
+-- Writing it here also puts us in front of KEP, which raises dexSize only if
+-- it is still below its own maximum:
+--
+--     local currentDexSize = mod.content.constants:get("dexSize") or 151
+--     if currentDexSize < 251 then mod.content.constants:patch("dexSize", 251)
+--
+-- Registry:get folds the ops recorded so far, so by the time KEP reads it the
+-- value is already ours and its guarded raise is a no-op.  The game.ready pass
+-- then raises again for anything that outgrows us.
 
 do
   local highest = 0
@@ -515,18 +544,22 @@ end
 do
   local cries = 0
   for _, record in ipairs(Data.SPECIES) do
-    local rel = ("cries/%d.ogg"):format(record.dex)
-    local path = (mod.assets and mod.assets.path)
-      and mod.assets:path(rel) or rel
-    local ok = pcall(function()
-      mod.content.cries:register(record.id, { file = path })
-    end)
-    if not ok then
-      ok = pcall(function()
-        mod.content.cries:patch(record.id, { file = path })
+    -- skipped for the shared 20: same duplicate-register problem as the
+    -- species themselves, since `cries` is a record registry too
+    if not kepShared[record.id] then
+      local rel = ("cries/%d.ogg"):format(record.dex)
+      local path = (mod.assets and mod.assets.path)
+        and mod.assets:path(rel) or rel
+      local ok = pcall(function()
+        mod.content.cries:register(record.id, { file = path })
       end)
+      if not ok then
+        ok = pcall(function()
+          mod.content.cries:patch(record.id, { file = path })
+        end)
+      end
+      if ok then cries = cries + 1 end
     end
-    if ok then cries = cries + 1 end
   end
   report.cries = cries
   mod.log:info("registered %d cries", cries)
@@ -615,6 +648,21 @@ handOffMetadata()
 
 -- ------------------------------------------------------------ encounters
 
+if kepPresent then
+  -- KEP hand-authors all 254 tables, and its picks are deliberate -- Route 1
+  -- seeds COINPUR on purpose.  But standing out of them entirely would leave
+  -- 478 species with nowhere to be caught, which is worse: an expansion nobody
+  -- can find is not an expansion.
+  --
+  -- So we append rather than replace, exactly as we do over vanilla Kanto.
+  -- KEP's ten slots keep the whole vanilla rarity curve and whatever share
+  -- NEW SPECIES SHARE leaves them (30% at the default), and our rows split the
+  -- rest.  Its curated picks stay the most common thing on the route.
+  mod.log:info("KEP owns the encounter tables; appending onto them rather "
+    .. "than replacing (its picks keep %d%% of the roll)",
+    math.floor((1 - newShare) * 100 + 0.5))
+end
+
 if encounterMode == "dataonly" then
   mod.log:info("DATA ONLY: no encounter tables written; wild placement is "
     .. "left to the randomizer or another mod")
@@ -640,6 +688,7 @@ do
   report.starterMode = starterMode
   report.specialMode = specialMode
   report.modernTrainers = modernTrainers
+  report.kepPresent = kepPresent
   report.respect = respect
   report.moves = 0
   for _ in pairs(NewMoves) do report.moves = report.moves + 1 end
@@ -698,7 +747,8 @@ end
 --
 -- The registry patch in src/encounters.lua is kept, but not relied on.  This
 -- reconciles against the table the game actually rolls on, which is the
--- fallback Kanto-Reforged uses for the same reason.
+-- fallback Kanto-Reforged uses for the same reason.  It is also what carries
+-- placement over KEP, whose override erases our registry patch outright.
 --
 -- Idempotent by species membership: a no-op for any row the registry patch
 -- already delivered, and safe to re-run.
@@ -777,7 +827,24 @@ mod.events:on("game.ready", function(payload)
   mod.log:info("wild reconcile: %d slots added, %d bucket tables widened",
     addedSlots, fixed)
 
-  -- Re-derive from the merged dataset and only ever raise.  Another mod may
+  -- Clear KEP's numbering before dexSize is settled, so the raise below sees
+  -- the shifted values.  The offset is measured from the merged data rather
+  -- than hardcoded, so it tracks whatever KEP's highest entry actually is.
+  if kepPresent then
+    local ours = {}
+    for _, record in ipairs(Data.SPECIES) do
+      if not kepShared[record.id] then ours[record.id] = true end
+    end
+    local shifted, offset, foreignMax =
+      Kep.renumber(game.data.pokemon, ours, 152)
+    report.kepOffset = offset
+    if shifted > 0 then
+      mod.log:info("renumbered %d species by +%d to clear KEP's dex "
+        .. "(highest foreign entry %d)", shifted, offset, foreignMax)
+    end
+  end
+
+  -- Re-derive from the MERGED dataset and only ever raise.  Another mod may
   -- add species past ours, and seedDefaults cannot help by then.  Lowering
   -- would truncate someone else's roster, so max() rather than assignment.
   local constants = game.data and game.data.constants
