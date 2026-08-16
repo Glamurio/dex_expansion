@@ -38,6 +38,8 @@ local mod = ...
 -- requires (require("src.core.Strings")) still work.  mod:read + loadstring is
 -- the sanctioned seam -- the same one quality_of_life uses -- and `loadstring`
 -- is the Lua 5.1 spelling, which matters because LOVE runs LuaJIT.
+--
+-- mod.log exposes info, warn and error.  There is no debug level.
 
 local compile = loadstring or load
 
@@ -464,14 +466,19 @@ end
 -- filter, all Gen 8/9: Corsola to Cursola, Linoone to Obstagoon, Wooper to
 -- Clodsire.  Checking against the registry rather than a hardcoded list also
 -- covers whatever a future rebuild adds.
+--
+-- Collected and reported once after the loop rather than per row: this used to
+-- call mod.log:debug, which does not exist, so the first dangling evolution
+-- crashed the mod.
+local prunedEvolutions = {}
 local function pruneEvolutions(record, known)
   local kept = {}
   for _, evo in ipairs(record.evolutions) do
     if known[evo.species] then
       kept[#kept + 1] = evo
     else
-      mod.log:debug("dropped %s -> %s: target not registered",
-        record.id, tostring(evo.species))
+      prunedEvolutions[#prunedEvolutions + 1] =
+        record.id .. " -> " .. tostring(evo.species)
     end
   end
   record.evolutions = kept
@@ -558,6 +565,11 @@ end
 
 report.species, report.skipped = registered, skipped
 mod.log:info("registered %d species (%d skipped)", registered, skipped)
+if #prunedEvolutions > 0 then
+  table.sort(prunedEvolutions)
+  mod.log:info("dropped %d evolutions with unregistered targets: %s",
+    #prunedEvolutions, table.concat(prunedEvolutions, ", "))
+end
 
 -- ------------------------------------------------------------- dex size
 -- dexSize has to be set explicitly.  src/core/Game.lua does:
@@ -896,8 +908,6 @@ mod.events:on("game.ready", function(payload)
             if rebuilt then
               table_.buckets = rebuilt
               fixed = fixed + 1
-              mod.log:debug("%s.%s: %d buckets for %d slots",
-                tostring(mapId), kind, #rebuilt, slots)
             end
           end
         end
