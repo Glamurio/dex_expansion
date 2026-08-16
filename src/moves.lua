@@ -108,10 +108,12 @@ local MATCHUPS = {
 -- `register` rather than `patch` because these ids do not exist in the vanilla
 -- dataset; if another mod got there first, fall back to patch so we extend
 -- rather than fight.
-local function registerAll(mod)
+--
+-- `skipTypeChart` leaves the chart alone entirely; see Moves.apply.
+local function registerAll(mod, skipTypeChart)
   local types, matchups, moves = 0, 0, 0
 
-  for _, t in ipairs(NEW_TYPES) do
+  for _, t in ipairs(skipTypeChart and {} or NEW_TYPES) do
     local ok = pcall(function()
       mod.content.type_chart:register(t.id,
         { name = t.name, category = t.category })
@@ -125,7 +127,7 @@ local function registerAll(mod)
     end
   end
 
-  for _, row in ipairs(MATCHUPS) do
+  for _, row in ipairs(skipTypeChart and {} or MATCHUPS) do
     local id, multiplier = row[1], row[2]
     local ok = pcall(function()
       mod.content.type_chart:register(id, { multiplier = multiplier })
@@ -149,15 +151,28 @@ local function registerAll(mod)
     end
   end
 
-  mod.log:info("registered %d types, %d matchups, %d moves",
-    types, matchups, moves)
+  if skipTypeChart then
+    mod.log:info("type chart left to the mod that owns it; registered %d moves",
+      moves)
+  else
+    mod.log:info("registered %d types, %d matchups, %d moves",
+      types, matchups, moves)
+  end
 end
 
 -- Returns (resolveMove, resolveTypes) for the active mode.
 -- resolveMove(id) -> id | nil   (nil means "drop this learnset entry")
 -- resolveTypes(list) -> list
-function Moves.apply(mod, mode)
-  registerAll(mod)
+--
+-- `skipTypeChart` is set when a mod that owns the type chart is installed.
+-- KEP registers STEEL / DARK / FAIRY itself and ships a deliberately different
+-- chart -- its Dark hits Dark for 2x and Normal for 0.5x, neither of which is
+-- the Gen 6 reading -- and it validates with ensureMatchup, which rejects a
+-- value that disagrees with its own.  Registering ours first makes its check
+-- fail on every row we got to first.  Its chart is a design decision for its
+-- world, so it wins; our species reference the types either way.
+function Moves.apply(mod, mode, skipTypeChart)
+  registerAll(mod, skipTypeChart)
 
   if mode ~= "retro" then
     return function(id) return id end, function(list) return list end
